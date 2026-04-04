@@ -18,34 +18,23 @@ class Settings(BaseSettings):
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
 
-    # ─── CORS ─────────────────────────────────────
-    # Vercel URLs + localhost
+    # ─── CORS ────────────────────────────────────
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://localhost:3001",
         "https://skolify.in",
         "https://www.skolify.in",
-        # Vercel preview URLs ke liye
-        "https://*.vercel.app",
     ]
 
-    # ─── Vector DB ────────────────────────────────
+    # ─── Vector DB ───────────────────────────────
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
     VECTOR_COLLECTION_NAME: str = "skolify_public_kb"
     TOP_K_RESULTS: int = 5
     MIN_SIMILARITY_SCORE: float = 0.20
 
-    # ─── Groq LLM (FREE - No data sharing) ───────
-    # Sign up: console.groq.com (free)
-    # Aapka data train nahi hota
+    # ─── Groq LLM ────────────────────────────────
     GROQ_API_KEY: str = ""
-    # Best free models:
-    # llama-3.3-70b-versatile - Best quality (free)
-    # llama-3.1-8b-instant    - Fastest (free)  
-    # mixtral-8x7b-32768      - Good (free)
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
-
-    # Generation
     MAX_TOKENS: int = 500
     TEMPERATURE: float = 0.65
 
@@ -53,16 +42,24 @@ class Settings(BaseSettings):
     MAX_HISTORY_PAIRS: int = 6
     CONVERSATION_EXPIRY_HOURS: int = 24
 
-    # ─── Security ─────────────────────────────────
+    # ─── Storage Backend ──────────────────────────
+    # "sqlite" → local development
+    # "turso"  → production (Render)
+    CONV_STORAGE: str = "sqlite"
+
+    # ─── Turso Credentials ────────────────────────
+    # turso.tech pe free account banao
+    TURSO_DATABASE_URL: str = ""
+    TURSO_AUTH_TOKEN: str = ""
+
+    # ─── Admin ───────────────────────────────────
     ADMIN_API_KEY: str = "change-this-in-production"
 
-    # ─── App ──────────────────────────────────────
+    # ─── App ─────────────────────────────────────
     APP_ENV: str = "development"
 
-    # Future: School Portal
-    # Jab portal integration karoge tab ye use hoga
+    # ─── Portal (Future) ──────────────────────────
     ENABLE_PORTAL_MODE: bool = False
-    PORTAL_SECRET_KEY: str = ""
 
     class Config:
         env_file = ".env"
