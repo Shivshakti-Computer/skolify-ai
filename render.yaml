@@ -1,0 +1,31 @@
+# render.yaml
+# Render.com pe free deploy ke liye
+
+services:
+  - type: web
+    name: skolify-ai
+    env: python
+    region: singapore  # India ke paas
+    plan: free         # FREE tier
+
+    buildCommand: |
+      pip install -r requirements.txt
+      playwright install chromium
+      playwright install-deps chromium
+
+    startCommand: |
+      uvicorn api.main:app --host 0.0.0.0 --port $PORT
+
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false    # Render dashboard se add karo
+      - key: ADMIN_API_KEY
+        sync: false
+      - key: APP_ENV
+        value: production
+
+    # Disk for ChromaDB + SQLite (Render free me 1GB)
+    disk:
+      name: skolify-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
