@@ -1,20 +1,22 @@
 # .gitignore
 
-# Python
 __pycache__/
 *.pyc
 *.pyo
 venv/
 .env
 
-# Data - ChromaDB aur raw data push nahi karna
+# ChromaDB mat push karo (Render pe rebuild hoga)
 data/chroma_db/
+
+# Raw scraped data bhi nahi chahiye
 data/raw/
-data/processed/
+
+# Local SQLite (production mein Turso use hoga)
 data/conversations.db
 
-# Lekin urls_to_scrape.txt PUSH karna hai
-!data/urls_to_scrape.txt
+# ✅ Processed chunks PUSH karo - Render pe zaroor chahiye
+# data/processed/    ← Comment out karo ya remove karo
 
-# Logs
-*.log
+# URLs file chahiye
+!data/urls_to_scrape.txt
