@@ -1,17 +1,11 @@
-# render.yaml
-
 services:
   - type: web
     name: skolify-ai
     env: python
     region: singapore
     plan: free
-
     buildCommand: pip install -r requirements.txt
-
-    # PORT variable explicitly pass karo
-    startCommand: sh -c "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-10000}"
-
+    startCommand: python -m api.main
     envVars:
       - key: APP_ENV
         value: production
