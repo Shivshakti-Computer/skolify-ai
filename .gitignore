@@ -2,21 +2,17 @@
 
 __pycache__/
 *.pyc
-*.pyo
 venv/
 .env
 
-# ChromaDB mat push karo (Render pe rebuild hoga)
+# ChromaDB mat push karo
 data/chroma_db/
 
-# Raw scraped data bhi nahi chahiye
+# Raw data nahi chahiye
 data/raw/
 
-# Local SQLite (production mein Turso use hoga)
+# Local SQLite
 data/conversations.db
 
-# ✅ Processed chunks PUSH karo - Render pe zaroor chahiye
-# data/processed/    ← Comment out karo ya remove karo
-
-# URLs file chahiye
-!data/urls_to_scrape.txt
+# Processed chunks PUSH KARO (comment out)
+# data/processed/

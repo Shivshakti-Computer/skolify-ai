@@ -1,8 +1,10 @@
 # api/config.py
 
+import os
 from pathlib import Path
 from pydantic_settings import BaseSettings
 from typing import List
+
 
 class Settings(BaseSettings):
 
@@ -14,7 +16,7 @@ class Settings(BaseSettings):
     API_TITLE: str = "Skolify AI"
     API_VERSION: str = "2.0.0"
     API_HOST: str = "0.0.0.0"
-    API_PORT: int = 8000
+    API_PORT: int = 7860
 
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
@@ -23,7 +25,7 @@ class Settings(BaseSettings):
         "https://www.skolify.in",
     ]
 
-    # ✅ Sabse chhota model - sirf 30MB RAM
+    # Chhota model - kam RAM
     EMBEDDING_MODEL: str = "paraphrase-MiniLM-L3-v2"
     VECTOR_COLLECTION_NAME: str = "skolify_public_kb"
     TOP_K_RESULTS: int = 5
