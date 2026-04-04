@@ -1,5 +1,20 @@
-venv/
-*.pyc
-.env
+# .gitignore
+
+# Python
 __pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+
+# Data - ChromaDB aur raw data push nahi karna
 data/chroma_db/
+data/raw/
+data/processed/
+data/conversations.db
+
+# Lekin urls_to_scrape.txt PUSH karna hai
+!data/urls_to_scrape.txt
+
+# Logs
+*.log
