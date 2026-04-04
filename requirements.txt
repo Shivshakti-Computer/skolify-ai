@@ -7,10 +7,8 @@ pydantic-settings>=2.0.0
 sentence-transformers>=2.5.0
 chromadb>=0.4.22
 httpx>=0.27.0
-playwright>=1.42.0
 beautifulsoup4>=4.12.0
 python-dotenv>=1.0.0
 
-# Turso ke liye koi extra package nahi!
-# httpx already upar install ho raha hai.
-# Pure HTTP API use karta hai — Render free pe works perfectly.
+# Playwright REMOVED - Render pe scraping nahi hoti
+# Local pe scraping karo, data GitHub pe push karo

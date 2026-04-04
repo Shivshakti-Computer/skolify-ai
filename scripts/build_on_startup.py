@@ -1,78 +1,70 @@
 # scripts/build_on_startup.py
-# Render deploy pe ChromaDB automatically rebuild karta hai
+# Render pe sirf pre-scraped data se rebuild karta hai
+# Playwright scraping nahi hoti production mein
 
-import os
 from pathlib import Path
 
+
 def should_rebuild() -> bool:
-    """Check karo rebuild zaroori hai ya nahi"""
+    """Check karo ChromaDB rebuild zaroori hai ya nahi"""
     chroma_path = Path("data/chroma_db")
-    
-    # Agar chroma_db exist nahi karta ya empty hai
+
     if not chroma_path.exists():
         return True
-    
-    # sqlite file check karo
+
     sqlite_file = chroma_path / "chroma.sqlite3"
     if not sqlite_file.exists():
         return True
-    
-    # File 1KB se chhoti hai matlab empty hai
+
+    # 1KB se chhota = empty
     if sqlite_file.stat().st_size < 1024:
         return True
-    
+
     return False
 
-def rebuild_knowledge_base():
-    """Full rebuild pipeline"""
-    print("🔄 ChromaDB not found — rebuilding from website...")
-    
-    # ── Step 1: Scrape ──
-    print("\n📡 Step 1: Scraping website...")
-    from scripts.scrape_website import SkolifyWebsiteScraper
-    scraper = SkolifyWebsiteScraper()
-    results = scraper.scrape_all()
-    
-    if not results:
-        print("❌ Scraping failed!")
-        return False
-    
-    print(f"✅ Scraped {len(results)} pages")
-    
-    # ── Step 2: Process ──
-    print("\n⚙️  Step 2: Processing data...")
-    from scripts.process_data import DataProcessor
-    processor = DataProcessor()
-    
-    raw_files = list(Path("data/raw").glob("scraped_data_*.json"))
-    if not raw_files:
-        print("❌ No raw data found!")
-        return False
-    
-    latest = max(raw_files, key=lambda p: p.stat().st_mtime)
-    chunks = processor.process_scraped_data(latest)
-    print(f"✅ Created {len(chunks)} chunks")
-    
-    # ── Step 3: Build Vector DB ──
-    print("\n💾 Step 3: Building ChromaDB...")
-    from scripts.build_vector_db import VectorDBBuilder
-    builder = VectorDBBuilder()
-    
+
+def rebuild_from_existing_data() -> bool:
+    """
+    Pre-scraped data se ChromaDB rebuild karo.
+    Playwright/scraping bilkul nahi.
+    Render pe ye hi chalega.
+    """
+    print("🔄 Rebuilding ChromaDB from pre-scraped data...")
+
+    # ── Check: processed chunks exist karte hain? ──
     chunks_files = list(Path("data/processed").glob("chunks_*.json"))
+
+    if not chunks_files:
+        print("❌ No processed chunks found!")
+        print("   Local pe ye karo:")
+        print("   1. python -m scripts.scrape_website")
+        print("   2. python -m scripts.process_data")
+        print("   3. git add data/processed/ && git push")
+        return False
+
     latest_chunks = max(chunks_files, key=lambda p: p.stat().st_mtime)
-    collection = builder.build_database(latest_chunks)
-    
-    print(f"✅ ChromaDB built: {collection.count()} documents")
-    return True
+    print(f"📂 Using: {latest_chunks.name}")
+
+    # ── Build Vector DB ──
+    try:
+        from scripts.build_vector_db import VectorDBBuilder
+        builder = VectorDBBuilder()
+        collection = builder.build_database(latest_chunks)
+        print(f"✅ ChromaDB rebuilt: {collection.count()} documents")
+        return True
+    except Exception as e:
+        print(f"❌ ChromaDB build failed: {e}")
+        return False
+
 
 def run():
-    """Main entry point"""
+    """Main entry — startup pe call hota hai"""
     if should_rebuild():
-        success = rebuild_knowledge_base()
+        print("⚠️  ChromaDB missing — rebuilding...")
+        success = rebuild_from_existing_data()
         if not success:
-            print("⚠️  Rebuild failed — API will use fallback responses")
+            print("⚠️  Rebuild failed — fallback responses only")
     else:
-        # Count documents
         try:
             import chromadb
             from chromadb.config import Settings as CS
@@ -81,10 +73,11 @@ def run():
                 settings=CS(anonymized_telemetry=False)
             )
             col = client.get_collection("skolify_public_kb")
-            print(f"✅ ChromaDB exists: {col.count()} documents — skip rebuild")
+            print(f"✅ ChromaDB OK: {col.count()} documents")
         except Exception:
-            print("⚠️  ChromaDB check failed — will rebuild")
-            rebuild_knowledge_base()
+            print("⚠️  ChromaDB check failed — rebuilding...")
+            rebuild_from_existing_data()
+
 
 if __name__ == "__main__":
     run()
