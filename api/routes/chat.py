@@ -64,10 +64,15 @@ class ChatResponse(BaseModel):
 # ════════════════════════════════════════════════
 
 def search_knowledge_base(query: str, n: int = 5) -> List[Dict]:
-    """Search website knowledge base"""
+    """Search ChromaDB - unavailable hone par empty list return karo"""
     try:
         model = get_embedding_model()
         collection = get_collection()
+
+        # ✅ Collection None hone par gracefully handle karo
+        if collection is None:
+            print("⚠️  ChromaDB unavailable - skipping search")
+            return []
 
         embedding = model.encode([query])[0]
 
@@ -100,7 +105,6 @@ def search_knowledge_base(query: str, n: int = 5) -> List[Dict]:
     except Exception as e:
         print(f"⚠️  Search error: {e}")
         return []
-
 
 def build_context_str(chunks: List[Dict]) -> str:
     if not chunks:

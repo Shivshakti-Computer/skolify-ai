@@ -48,6 +48,7 @@ def get_chroma_client():
 def get_collection():
     global _collection
     if _collection is None:
+        # Production mein ChromaDB optional hai
         client = get_chroma_client()
         try:
             _collection = client.get_collection(
@@ -55,10 +56,10 @@ def get_collection():
             )
             print(f"✅ KB loaded: {_collection.count()} docs")
         except Exception as e:
-            print(f"❌ Collection error: {e}")
-            raise Exception(
-                "Vector DB missing! Run: python -m scripts.build_vector_db"
-            )
+            print(f"⚠️  ChromaDB not available: {e}")
+            print("   Groq will use its own knowledge")
+            # None return karo - crash mat karo
+            return None
     return _collection
 
 
