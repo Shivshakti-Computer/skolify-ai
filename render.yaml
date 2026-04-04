@@ -7,10 +7,10 @@ services:
     region: singapore
     plan: free
 
-    # Playwright bilkul nahi - sirf pip install
     buildCommand: pip install -r requirements.txt
 
-    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    # PORT variable explicitly pass karo
+    startCommand: sh -c "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-10000}"
 
     envVars:
       - key: APP_ENV

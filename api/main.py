@@ -120,3 +120,15 @@ async def root():
         # Production mein docs link nahi
         **({"docs": "/docs"} if settings.APP_ENV != "production" else {}),
     }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    import os
+    
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(
+        "api.main:app",
+        host="0.0.0.0",
+        port=port,
+    )
