@@ -1,0 +1,181 @@
+{
+    "plans": {
+        "starter": {
+            "price_monthly": 499,
+            "price_yearly": 4999,
+            "yearly_saving": 989,
+            "students_base": 500,
+            "students_max_with_addon": 750,
+            "teachers_base": 20,
+            "teachers_max_with_addon": 30,
+            "free_credits": 500,
+            "credit_rollover": "No rollover - monthly reset",
+            "max_carry_forward": 0,
+            "storage": "2 GB",
+            "modules": 6,
+            "per_student_monthly": 1.00,
+            "per_student_daily": 0.033,
+            "support": "Email support"
+        },
+        "growth": {
+            "price_monthly": 999,
+            "price_yearly": 9999,
+            "yearly_saving": 1989,
+            "students_base": 1500,
+            "students_max_with_addon": 2250,
+            "teachers_base": 50,
+            "teachers_max_with_addon": 75,
+            "free_credits": 1500,
+            "credit_rollover": "3 months rollover",
+            "max_carry_forward": 4500,
+            "storage": "10 GB",
+            "modules": 13,
+            "per_student_monthly": 0.67,
+            "per_student_daily": 0.022,
+            "support": "WhatsApp support",
+            "is_popular": true
+        },
+        "pro": {
+            "price_monthly": 1999,
+            "price_yearly": 19999,
+            "yearly_saving": 3989,
+            "students_base": 5000,
+            "students_max_with_addon": 7000,
+            "teachers_base": 150,
+            "teachers_max_with_addon": 200,
+            "free_credits": 3000,
+            "credit_rollover": "6 months rollover",
+            "max_carry_forward": 18000,
+            "storage": "50 GB",
+            "modules": 16,
+            "per_student_monthly": 0.40,
+            "per_student_daily": 0.013,
+            "support": "Priority support + Dedicated WhatsApp group"
+        },
+        "enterprise": {
+            "price_monthly": 3999,
+            "price_yearly": 39999,
+            "yearly_saving": 7989,
+            "students_base": "Unlimited",
+            "students_max_with_addon": "Unlimited",
+            "teachers_base": "Unlimited",
+            "teachers_max_with_addon": "Unlimited",
+            "free_credits": 10000,
+            "credit_rollover": "Never expire",
+            "max_carry_forward": "Unlimited",
+            "storage": "Unlimited",
+            "modules": 23,
+            "per_student_monthly": 0.40,
+            "per_student_daily": 0.013,
+            "support": "Dedicated account manager"
+        }
+    },
+    "credits": {
+        "sms": "1 credit = 1 SMS",
+        "whatsapp": "1 credit = 1 WhatsApp message",
+        "email": "1 credit = 10 emails",
+        "value": "1 Credit = ₹1"
+    },
+    "addons": {
+        "extra_students": [
+            {
+                "quantity": 50,
+                "price": 99,
+                "per_student": 1.98
+            },
+            {
+                "quantity": 100,
+                "price": 179,
+                "per_student": 1.79
+            },
+            {
+                "quantity": 250,
+                "price": 399,
+                "per_student": 1.60
+            },
+            {
+                "quantity": 500,
+                "price": 699,
+                "per_student": 1.40
+            }
+        ],
+        "extra_teachers": [
+            {
+                "quantity": 5,
+                "price": 99,
+                "per_staff": 19.8
+            },
+            {
+                "quantity": 10,
+                "price": 179,
+                "per_staff": 17.9
+            },
+            {
+                "quantity": 25,
+                "price": 399,
+                "per_staff": 15.96
+            }
+        ],
+        "credit_packs": [
+            {
+                "credits": 250,
+                "price": 199,
+                "per_credit": 0.80
+            },
+            {
+                "credits": 700,
+                "price": 499,
+                "per_credit": 0.71
+            },
+            {
+                "credits": 1500,
+                "price": 999,
+                "per_credit": 0.67
+            },
+            {
+                "credits": 3500,
+                "price": 1999,
+                "per_credit": 0.57
+            }
+        ]
+    },
+    "addon_limits": {
+        "starter": {
+            "max_extra_students": 250,
+            "max_total_students": 750,
+            "max_extra_teachers": 10,
+            "max_total_teachers": 30
+        },
+        "growth": {
+            "max_extra_students": 750,
+            "max_total_students": 2250,
+            "max_extra_teachers": 25,
+            "max_total_teachers": 75
+        },
+        "pro": {
+            "max_extra_students": 2000,
+            "max_total_students": 7000,
+            "max_extra_teachers": 50,
+            "max_total_teachers": 200
+        },
+        "enterprise": {
+            "max_extra_students": "Unlimited",
+            "max_total_students": "Unlimited",
+            "max_extra_teachers": "Unlimited",
+            "max_total_teachers": "Unlimited"
+        }
+    },
+    "trial": {
+        "duration_days": 60,
+        "credit_card_required": false,
+        "free_credits_during_trial": 500,
+        "setup_time_minutes": 15
+    },
+    "general": {
+        "starting_price": 499,
+        "per_student_min": 0.33,
+        "per_student_max": 1.00,
+        "industry_average_per_student": "₹3-5",
+        "annual_discount": "2 months free"
+    }
+}
