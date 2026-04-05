@@ -1,5 +1,3 @@
-# api/config.py
-
 import os
 from pathlib import Path
 from pydantic_settings import BaseSettings
@@ -16,16 +14,19 @@ class Settings(BaseSettings):
     API_TITLE: str = "Skolify AI"
     API_VERSION: str = "2.0.0"
     API_HOST: str = "0.0.0.0"
-    API_PORT: int = 7860
+    API_PORT: int = 7860  # ✅ Already correct
 
+    # ✅ Change 1: HuggingFace URL add karo
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://localhost:3001",
         "https://skolify.in",
         "https://www.skolify.in",
+        "https://*.vercel.app",
+        "https://*.hf.space",        # ← ADD
+        "https://huggingface.co",    # ← ADD
     ]
 
-    # Chhota model - kam RAM
     EMBEDDING_MODEL: str = "paraphrase-MiniLM-L3-v2"
     VECTOR_COLLECTION_NAME: str = "skolify_public_kb"
     TOP_K_RESULTS: int = 5
@@ -44,7 +45,10 @@ class Settings(BaseSettings):
     TURSO_AUTH_TOKEN: str = ""
 
     ADMIN_API_KEY: str = "change-this-in-production"
-    APP_ENV: str = "development"
+
+    # ✅ Change 2: Default production
+    APP_ENV: str = os.environ.get("APP_ENV", "production")
+
     ENABLE_PORTAL_MODE: bool = False
 
     class Config:

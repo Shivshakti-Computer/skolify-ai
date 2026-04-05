@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.local
+.git/
+.vscode/
+.idea/
+venv/
+.venv/
+*.log
+.DS_Store
+tests/
+docs/
+.pytest_cache/
+scripts/test_scrape.py
+scripts/scrape_website.py

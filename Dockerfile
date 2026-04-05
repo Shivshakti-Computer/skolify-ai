@@ -1,28 +1,28 @@
-# Dockerfile
-# Root directory mein rakho: skolify-ai/Dockerfile
-
 FROM python:3.11-slim
 
-# Build tools
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
+# HuggingFace non-root user requirement
+RUN useradd -m -u 1000 user
 
-WORKDIR /app
+USER user
 
-# Requirements copy + install
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+ENV HOME=/home/user \
+    PATH=/home/user/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    SENTENCE_TRANSFORMERS_HOME=/home/user/app/.cache
 
-# Poora project copy karo
-COPY . .
+WORKDIR $HOME/app
 
-# Data directories banao
-RUN mkdir -p data/processed data/raw data/chroma_db
+# Dependencies install
+COPY --chown=user requirements.txt .
 
-# HuggingFace port
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Project code copy
+COPY --chown=user . .
+
+# Required directories
+RUN mkdir -p data/processed data/raw data/chroma_db .cache
+
 EXPOSE 7860
 
-# Start
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "7860", "--workers", "1"]
