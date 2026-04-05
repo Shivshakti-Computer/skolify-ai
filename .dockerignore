@@ -15,3 +15,4 @@ docs/
 .pytest_cache/
 scripts/test_scrape.py
 scripts/scrape_website.py
+data/chroma_db/

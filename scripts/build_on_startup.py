@@ -24,28 +24,18 @@ def should_rebuild() -> bool:
 
 
 def rebuild_from_existing_data() -> bool:
-    """
-    Pre-scraped data se ChromaDB rebuild karo.
-    Playwright/scraping bilkul nahi.
-    Render pe ye hi chalega.
-    """
     print("🔄 Rebuilding ChromaDB from pre-scraped data...")
 
-    # ── Check: processed chunks exist karte hain? ──
     chunks_files = list(Path("data/processed").glob("chunks_*.json"))
 
     if not chunks_files:
         print("❌ No processed chunks found!")
-        print("   Local pe ye karo:")
-        print("   1. python -m scripts.scrape_website")
-        print("   2. python -m scripts.process_data")
-        print("   3. git add data/processed/ && git push")
         return False
 
-    latest_chunks = max(chunks_files, key=lambda p: p.stat().st_mtime)
+    # ✅ FIX: Filename se sort karo (YYYYMMDD_HHMMSS format)
+    latest_chunks = max(chunks_files, key=lambda p: p.name)
     print(f"📂 Using: {latest_chunks.name}")
 
-    # ── Build Vector DB ──
     try:
         from scripts.build_vector_db import VectorDBBuilder
         builder = VectorDBBuilder()
@@ -55,7 +45,6 @@ def rebuild_from_existing_data() -> bool:
     except Exception as e:
         print(f"❌ ChromaDB build failed: {e}")
         return False
-
 
 def run():
     """Main entry — startup pe call hota hai"""
