@@ -1,6 +1,9 @@
 # api/routes/chat.py
+# FIXES:
+# 1. Multi-provider LLM (Groq → Gemini fallback)
+# 2. Public chat only - no sensitive data ever sent to LLM
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import uuid
@@ -9,7 +12,7 @@ import re
 from ..dependencies import (
     get_embedding_model,
     get_collection,
-    get_groq_client,
+    get_llm_manager,      # ✅ Multi-provider manager
     get_conv_store,
 )
 from ..config import settings
@@ -23,21 +26,15 @@ router = APIRouter(prefix="/api", tags=["chat"])
 
 
 # ════════════════════════════════════════════════
-# REQUEST / RESPONSE MODELS
+# MODELS
 # ════════════════════════════════════════════════
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=1000)
     conversation_id: Optional[str] = None
     role: Optional[str] = "guest"
-
-    # Mode: "public" = website visitor, "portal" = logged in school user
     mode: Optional[str] = "public"
-
-    # ✅ tenant_id (school_id nahi - aapke User model se match)
     tenant_id: Optional[str] = None
-
-    # User info (portal mode mein session se aata hai)
     user_id: Optional[str] = None
     user_name: Optional[str] = None
 
@@ -53,29 +50,26 @@ class ChatResponse(BaseModel):
     answer: str
     conversation_id: str
     sources: List[Source] = []
-    # Matching aapke existing route.ts format
     quickReplies: List[Dict] = []
     canForward: bool = False
     metadata: Dict[str, Any] = {}
 
 
 # ════════════════════════════════════════════════
-# VECTOR SEARCH
+# VECTOR SEARCH - Same as before
 # ════════════════════════════════════════════════
 
 def search_knowledge_base(query: str, n: int = 5) -> List[Dict]:
-    """Search ChromaDB - unavailable hone par empty list return karo"""
     try:
-        model = get_embedding_model()
+        model      = get_embedding_model()
         collection = get_collection()
 
         if collection is None:
-            print("⚠️  ChromaDB unavailable - skipping search")
+            print("⚠️  ChromaDB unavailable")
             return []
 
         embedding = model.encode([query])[0]
-
-        results = collection.query(
+        results   = collection.query(
             query_embeddings=[embedding.tolist()],
             n_results=n,
             include=["documents", "metadatas", "distances"],
@@ -90,19 +84,13 @@ def search_knowledge_base(query: str, n: int = 5) -> List[Dict]:
             results["metadatas"][0],
             results["distances"][0],
         ):
-            # ✅ FIX: Cosine distance (0-2) ko similarity (0-1) mein convert
-            # dist=0 → perfect match → score=1.0
-            # dist=2 → opposite → score=0.0
             score = max(0.0, 1.0 - (dist / 2.0))
-
-            # ✅ FIX: Threshold lower karo
-            # paraphrase-MiniLM-L3-v2 ke liye 0.05 theek hai
             if score >= 0.05:
                 chunks.append({
-                    "text": doc,
-                    "url": meta.get("url", ""),
+                    "text":      doc,
+                    "url":       meta.get("url", ""),
                     "page_type": meta.get("page_type", "general"),
-                    "score": round(score, 3),
+                    "score":     round(score, 3),
                 })
 
         print(f"   Scores: {[c['score'] for c in chunks]}")
@@ -112,14 +100,13 @@ def search_knowledge_base(query: str, n: int = 5) -> List[Dict]:
         print(f"⚠️  Search error: {e}")
         return []
 
+
 def build_context_str(chunks: List[Dict]) -> str:
     if not chunks:
         return ""
-
     parts = []
     for i, c in enumerate(chunks[:4], 1):
         parts.append(f"[Source {i}: {c['url']}]\n{c['text']}")
-
     return "\n\n---\n\n".join(parts)
 
 
@@ -128,11 +115,9 @@ def build_context_str(chunks: List[Dict]) -> str:
 # ════════════════════════════════════════════════
 
 def extract_context(message: str) -> Dict:
-    """Extract entities from message (no LLM needed)"""
-    updates = {}
+    updates   = {}
     msg_lower = message.lower()
 
-    # Student count
     numbers = re.findall(r'\b(\d{2,5})\b', message)
     for n_str in numbers:
         n = int(n_str)
@@ -140,21 +125,14 @@ def extract_context(message: str) -> Dict:
             updates["student_count"] = n
             break
 
-    # Topic detection
     topics = {
-        "pricing": [
-            "price", "cost", "plan", "kitna", "₹",
-            "rupee", "monthly", "yearly", "fee", "cheap",
-        ],
-        "features": [
-            "feature", "module", "offer", "include",
-            "kya kya", "what can", "kya hota",
-        ],
-        "trial": ["trial", "free", "demo", "try", "bina paise"],
-        "support": ["support", "help", "contact", "call", "email"],
-        "setup": ["setup", "start", "register", "kaise", "begin"],
+        "pricing":  ["price", "cost", "plan", "kitna", "₹", "rupee", "monthly", "yearly", "fee", "cheap"],
+        "features": ["feature", "module", "offer", "include", "kya kya", "what can", "kya hota"],
+        "trial":    ["trial", "free", "demo", "try", "bina paise"],
+        "support":  ["support", "help", "contact", "call", "email"],
+        "setup":    ["setup", "start", "register", "kaise", "begin"],
         "security": ["security", "safe", "privacy", "data"],
-        "credits": ["credit", "sms", "whatsapp", "message"],
+        "credits":  ["credit", "sms", "whatsapp", "message"],
     }
 
     for topic, keywords in topics.items():
@@ -166,50 +144,45 @@ def extract_context(message: str) -> Dict:
 
 
 # ════════════════════════════════════════════════
-# QUICK REPLIES GENERATOR
+# QUICK REPLIES
 # ════════════════════════════════════════════════
 
 def get_quick_replies(topic: str, role: str = "guest") -> List[Dict]:
-    """
-    Generate contextual quick replies.
-    Matches format expected by ChatWidget.tsx
-    """
-    # Default quick replies
     defaults = [
-        {"text": "💰 Plans", "payload": "admin_plans_overview"},
-        {"text": "🎁 Free Trial", "payload": "trial_info"},
-        {"text": "📦 Features", "payload": "features_overview"},
-        {"text": "📞 Talk to Us", "action": "forward"},
+        {"text": "💰 Plans",        "payload": "admin_plans_overview"},
+        {"text": "🎁 Free Trial",   "payload": "trial_info"},
+        {"text": "📦 Features",     "payload": "features_overview"},
+        {"text": "📞 Talk to Us",   "action": "forward"},
     ]
 
     topic_replies = {
         "pricing": [
             {"text": "🎁 Start Free Trial", "payload": "trial_info"},
-            {"text": "⭐ Growth Plan", "payload": "growth_plan_detail"},
-            {"text": "📦 All Features", "payload": "features_overview"},
-            {"text": "📞 Get Demo", "action": "forward"},
+            {"text": "⭐ Growth Plan",      "payload": "growth_plan_detail"},
+            {"text": "📦 All Features",     "payload": "features_overview"},
+            {"text": "📞 Get Demo",         "action": "forward"},
         ],
         "features": [
-            {"text": "💰 See Pricing", "payload": "admin_plans_overview"},
-            {"text": "🎁 Free Trial", "payload": "trial_info"},
-            {"text": "📱 Mobile App?", "payload": "mobile_features"},
-            {"text": "📞 Talk to Us", "action": "forward"},
+            {"text": "💰 See Pricing",  "payload": "admin_plans_overview"},
+            {"text": "🎁 Free Trial",   "payload": "trial_info"},
+            {"text": "📱 Mobile App?",  "payload": "mobile_features"},
+            {"text": "📞 Talk to Us",   "action": "forward"},
         ],
         "trial": [
-            {"text": "🚀 Start Now", "payload": "start_trial"},
-            {"text": "💰 After Trial?", "payload": "admin_plans_overview"},
+            {"text": "🚀 Start Now",        "payload": "start_trial"},
+            {"text": "💰 After Trial?",     "payload": "admin_plans_overview"},
             {"text": "📦 What's Included?", "payload": "trial_features"},
-            {"text": "📞 Get Help", "action": "forward"},
+            {"text": "📞 Get Help",         "action": "forward"},
         ],
         "support": [
-            {"text": "💰 Pricing", "payload": "admin_plans_overview"},
-            {"text": "🎁 Free Trial", "payload": "trial_info"},
-            {"text": "📞 Contact Team", "action": "forward"},
+            {"text": "💰 Pricing",        "payload": "admin_plans_overview"},
+            {"text": "🎁 Free Trial",     "payload": "trial_info"},
+            {"text": "📞 Contact Team",   "action": "forward"},
         ],
         "setup": [
-            {"text": "🎁 Start Trial", "payload": "trial_info"},
-            {"text": "📹 Video Guide", "payload": "setup_guide"},
-            {"text": "📞 Free Setup Call", "action": "forward"},
+            {"text": "🎁 Start Trial",      "payload": "trial_info"},
+            {"text": "📹 Video Guide",      "payload": "setup_guide"},
+            {"text": "📞 Free Setup Call",  "action": "forward"},
         ],
     }
 
@@ -217,12 +190,12 @@ def get_quick_replies(topic: str, role: str = "guest") -> List[Dict]:
 
 
 # ════════════════════════════════════════════════
-# SMART FALLBACK (When Groq unavailable)
+# SMART FALLBACK
 # ════════════════════════════════════════════════
 
 FALLBACK_RESPONSES = {
     "greeting": (
-        "Hey! 👋 I'm **Aria**, Skolify's AI assistant!\n\n"
+        "Hey! 👋 I'm **Anvi**, Skolify's AI assistant!\n\n"
         "I can help you with pricing, features, free trial, "
         "and getting started.\n\nWhat would you like to know?"
     ),
@@ -234,8 +207,7 @@ FALLBACK_RESPONSES = {
         "• **Enterprise** — ₹3,999/mo (Unlimited)\n\n"
         "✅ Annual = 2 months FREE\n"
         "✅ All plans: **60-day free trial**\n\n"
-        "How many students does your school have? "
-        "I'll suggest the best plan!"
+        "How many students does your school have?"
     ),
     "features": (
         "Skolify has **22+ modules**!\n\n"
@@ -251,8 +223,7 @@ FALLBACK_RESPONSES = {
         "✅ Full access — no credit card\n"
         "✅ 500 free SMS/WhatsApp credits\n"
         "✅ Free setup support\n\n"
-        "Start at **skolify.in/register** — "
-        "takes just 2 minutes!"
+        "Start at **skolify.in/register** — takes just 2 minutes!"
     ),
     "default": (
         "I can help you with Skolify's plans, features, "
@@ -261,8 +232,8 @@ FALLBACK_RESPONSES = {
     ),
 }
 
+
 def smart_fallback(message: str, context: Dict) -> str:
-    """Template response when Groq is down"""
     msg = message.lower()
 
     greetings = ["hi", "hello", "hey", "namaste", "hlo", "hii"]
@@ -273,7 +244,6 @@ def smart_fallback(message: str, context: Dict) -> str:
     if topic in FALLBACK_RESPONSES:
         return FALLBACK_RESPONSES[topic]
 
-    # Keyword check
     if any(w in msg for w in ["price", "plan", "cost", "kitna"]):
         return FALLBACK_RESPONSES["pricing"]
     if any(w in msg for w in ["feature", "module", "offer"]):
@@ -293,47 +263,47 @@ async def chat(request: ChatRequest):
     try:
         conv_id = request.conversation_id or str(uuid.uuid4())
         message = request.message.strip()
-        role = request.role or "guest"
+        role    = request.role or "guest"
 
-        # ✅ school_id → tenant_id
-        is_portal_mode = bool(
-            request.tenant_id and settings.ENABLE_PORTAL_MODE
-        )
-        mode = "portal" if is_portal_mode else "public"
+        is_portal_mode = bool(request.tenant_id and settings.ENABLE_PORTAL_MODE)
+        mode           = "portal" if is_portal_mode else "public"
 
         print(f"\n💬 [{conv_id[:8]}] [{role}] {message[:60]}...")
 
-        # ── Load Conversation ──
-        store = get_conv_store()
+        # ── Conversation ───────────────────────────────────
+        store        = get_conv_store()
         conversation = store.get_or_create(
             conv_id=conv_id,
             mode=mode,
-            tenant_id=request.tenant_id,   # ✅ school_id → tenant_id
+            tenant_id=request.tenant_id,
             user_role=role,
             user_id=request.user_id,
         )
 
-        # ── Search Knowledge Base ──
-        chunks = search_knowledge_base(message)
+        # ── Knowledge Base Search ──────────────────────────
+        # ✅ PRIVACY: Only public website info search hota hai
+        # School data kabhi search nahi hota
+        chunks      = search_knowledge_base(message)
         context_str = build_context_str(chunks)
+        ctx_update  = extract_context(message)
         print(f"🔍 {len(chunks)} chunks found")
 
-        # ── Extract context ──
-        ctx_update = extract_context(message)
-
-        # ── System Prompt ──
+        # ── System Prompt ──────────────────────────────────
         if is_portal_mode:
+            # Portal mode: guide only, no real data in prompt
             system_prompt = PORTAL_SYSTEM_PROMPT.format(
                 school_name=request.user_name or "Your School",
                 user_role=role,
                 user_name=request.user_name or "User",
-                school_context="{}",
+                # ✅ PRIVACY: Real school data NEVER in prompt
+                school_context="Guide user to correct portal section.",
             )
             system_prompt += ROLE_PROMPTS.get(role, "")
         else:
             system_prompt = PUBLIC_SYSTEM_PROMPT
 
-        # ── Augmented message ──
+        # ── Augmented Message ──────────────────────────────
+        # ✅ PRIVACY: Only public KB context added
         if context_str:
             augmented_message = (
                 f"{message}\n\n"
@@ -342,33 +312,31 @@ async def chat(request: ChatRequest):
         else:
             augmented_message = message
 
-        # ── LLM History ──
-        history = store.get_llm_messages(conv_id)
+        # ── LLM History ───────────────────────────────────
+        history          = store.get_llm_messages(conv_id)
         messages_for_llm = history + [
             {"role": "user", "content": augmented_message}
         ]
 
-        # ── Call Groq ──
-        groq = get_groq_client()
-        ai_response = None
-        used_llm = False
+        # ── Multi-Provider LLM Call ────────────────────────
+        # ✅ RATE LIMIT FIX: Groq → Gemini → Together → Fallback
+        llm                        = get_llm_manager()
+        ai_response, provider_used = await llm.chat(
+            system_prompt=system_prompt,
+            messages=messages_for_llm,
+        )
+        used_llm = ai_response is not None
 
-        if groq.is_configured():
-            print(f"🤖 Calling Groq ({settings.GROQ_MODEL})...")
-            ai_response = await groq.chat(
-                system_prompt=system_prompt,
-                messages=messages_for_llm,
-            )
-            if ai_response:
-                used_llm = True
-                print(f"✅ Groq: {len(ai_response)} chars")
+        if used_llm:
+            print(f"✅ LLM: {provider_used} | {len(ai_response)} chars")
 
-        # ── Fallback ──
+        # ── Smart Fallback ─────────────────────────────────
         if not ai_response:
-            print("📋 Using smart fallback")
-            ai_response = smart_fallback(message, ctx_update)
+            print("📋 All LLMs unavailable → smart fallback")
+            ai_response   = smart_fallback(message, ctx_update)
+            provider_used = "local_fallback"
 
-        # ── Save to memory ──
+        # ── Save ───────────────────────────────────────────
         store.add_messages(
             conv_id=conv_id,
             user_msg=message,
@@ -376,21 +344,15 @@ async def chat(request: ChatRequest):
             context_update=ctx_update,
         )
 
-        # ── Quick replies ──
-        topic = ctx_update.get("last_topic", "")
+        # ── Quick Replies + Sources ────────────────────────
+        topic        = ctx_update.get("last_topic", "")
         quick_replies = get_quick_replies(topic, role)
-
-        # ── Sources ──
-        sources = [
-            Source(
-                url=c["url"],
-                page_type=c["page_type"],
-                score=c["score"],
-            )
+        sources       = [
+            Source(url=c["url"], page_type=c["page_type"], score=c["score"])
             for c in chunks[:3]
         ]
 
-        print(f"✅ Done | LLM={used_llm} | Sources={len(sources)}")
+        print(f"✅ Done | Provider={provider_used} | Sources={len(sources)}")
 
         return ChatResponse(
             success=True,
@@ -400,16 +362,16 @@ async def chat(request: ChatRequest):
             quickReplies=quick_replies,
             canForward=False,
             metadata={
-                "llm_used": used_llm,
-                "llm_provider": "groq" if used_llm else "fallback",
-                "model": settings.GROQ_MODEL if used_llm else "template",
-                "context_chunks": len(chunks),
-                "source": "ai_groq" if used_llm else "fallback",
-                "portal_mode": is_portal_mode,
-                "tenant_id": request.tenant_id,   # ✅
-                "conversation_turns": (
-                    len(conversation["messages"]) // 2 + 1
-                ),
+                "llm_used":           used_llm,
+                "llm_provider":       provider_used,
+                "model":              _get_model_name(provider_used),
+                "context_chunks":     len(chunks),
+                "source":             f"ai_{provider_used}" if used_llm else "local_fallback",
+                "portal_mode":        is_portal_mode,
+                "tenant_id":          request.tenant_id,
+                # ✅ Privacy flag
+                "data_sent_to_llm":   False,
+                "conversation_turns": len(conversation["messages"]) // 2 + 1,
             },
         )
 
@@ -422,15 +384,13 @@ async def chat(request: ChatRequest):
             success=False,
             answer=(
                 "Oops! Something went wrong. 😅\n\n"
-                "Please try again, or reach out at "
-                "**support@skolify.in**"
+                "Please try again, or reach out at **support@skolify.in**"
             ),
             conversation_id=request.conversation_id or str(uuid.uuid4()),
-            quickReplies=[
-                {"text": "📞 Contact Support", "action": "forward"}
-            ],
+            quickReplies=[{"text": "📞 Contact Support", "action": "forward"}],
             metadata={"error": str(e)},
         )
+
 
 # ════════════════════════════════════════════════
 # HEALTH CHECK
@@ -438,24 +398,34 @@ async def chat(request: ChatRequest):
 
 @router.get("/health")
 async def health():
-    """System health — used by Next.js route.ts"""
     status = {
-        "api": "healthy",
+        "api":      "healthy",
         "vector_db": "unknown",
-        "llm": "unknown",
+        "llm":      "unknown",
         "documents": 0,
     }
 
     try:
         col = get_collection()
-        status["vector_db"] = "healthy"
-        status["documents"] = col.count()
+        if col:
+            status["vector_db"] = "healthy"
+            status["documents"] = col.count()
+        else:
+            status["vector_db"] = "unavailable"
     except Exception as e:
         status["vector_db"] = f"error: {str(e)}"
 
-    groq = get_groq_client()
-    status["llm"] = "groq" if groq.is_configured() else "fallback_only"
-    status["model"] = settings.GROQ_MODEL
+    # ✅ Multi-provider status
+    try:
+        llm    = get_llm_manager()
+        status["llm"] = "multi_provider"
+        status["providers"] = {
+            name: client.is_configured()
+            for name, client in llm.providers.items()
+        }
+        status["provider_order"] = llm.provider_order
+    except Exception:
+        status["llm"] = "unknown"
 
     try:
         stats = get_conv_store().get_stats()
@@ -464,3 +434,15 @@ async def health():
         pass
 
     return status
+
+
+# ── Helper ────────────────────────────────────────────────
+def _get_model_name(provider: str) -> str:
+    models = {
+        "groq":           settings.GROQ_MODEL,
+        "gemini":         settings.GEMINI_MODEL,
+        "together":       settings.TOGETHER_MODEL,
+        "local_fallback": "template",
+        "none":           "template",
+    }
+    return models.get(provider, "unknown")

@@ -776,3 +776,711 @@ def get_conv_store() -> BaseConversationStore:
     _conv_store = SQLiteConversationStore(str(settings.CONVERSATIONS_DB))
     print("✅ Using SQLite Local Storage (development)")
     return _conv_store
+
+
+
+# ════════════════════════════════════════════════
+# GEMINI CLIENT
+# aistudio.google.com/apikey se free key lo
+# Free: 15 req/min, 1500 req/day, 1M tokens/day
+# ════════════════════════════════════════════════
+
+class GeminiClient:
+
+    BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+
+    def __init__(self):
+        self.api_key = settings.GEMINI_API_KEY
+        self.model   = settings.GEMINI_MODEL
+
+    def is_configured(self) -> bool:
+        return bool(self.api_key and self.api_key.strip())
+
+    async def chat(
+        self,
+        system_prompt: str,
+        messages: List[Dict],
+        temperature: float = None,
+        max_tokens: int = None,
+    ) -> Optional[str]:
+        if not self.is_configured():
+            return None
+
+        temperature = min(temperature or settings.TEMPERATURE, 1.0)
+        max_tokens  = max_tokens or settings.MAX_TOKENS
+
+        # ── OpenAI format → Gemini format convert ─────────
+        gemini_contents = []
+
+        # System prompt inject
+        gemini_contents.append({
+            "role":  "user",
+            "parts": [{"text": f"[Instructions]\n{system_prompt}"}]
+        })
+        gemini_contents.append({
+            "role":  "model",
+            "parts": [{"text": "Understood. I'll follow these instructions carefully."}]
+        })
+
+        # Conversation history
+        for msg in messages:
+            role = "user" if msg["role"] == "user" else "model"
+            gemini_contents.append({
+                "role":  role,
+                "parts": [{"text": msg["content"]}]
+            })
+
+        payload = {
+            "contents": gemini_contents,
+            "generationConfig": {
+                "temperature":     temperature,
+                "maxOutputTokens": max_tokens,
+                "topP":            0.95,
+            },
+            # Safety settings - school app ke liye relaxed
+            "safetySettings": [
+                {"category": "HARM_CATEGORY_HARASSMENT",
+                 "threshold": "BLOCK_ONLY_HIGH"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH",
+                 "threshold": "BLOCK_ONLY_HIGH"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                 "threshold": "BLOCK_ONLY_HIGH"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                 "threshold": "BLOCK_ONLY_HIGH"},
+            ]
+        }
+
+        try:
+            url = (
+                f"{self.BASE_URL}/models/{self.model}"
+                f":generateContent?key={self.api_key}"
+            )
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    url,
+                    headers={"Content-Type": "application/json"},
+                    json=payload,
+                )
+
+                if response.status_code != 200:
+                    print(f"❌ Gemini {response.status_code}")
+                    print(f"   Response: {response.text[:300]}")
+                    return None
+
+                if response.status_code == 200:
+                    data       = response.json()
+                    candidates = data.get("candidates", [])
+
+                    if not candidates:
+                        print("⚠️  Gemini: No candidates returned")
+                        return None
+
+                    # Content extract
+                    content = (
+                        candidates[0]
+                        .get("content", {})
+                        .get("parts", [{}])[0]
+                        .get("text", "")
+                        .strip()
+                    )
+
+                    if content:
+                        tokens = data.get("usageMetadata", {})
+                        print(
+                            f"   ✅ Gemini: "
+                            f"{tokens.get('totalTokenCount', '?')} tokens"
+                        )
+                        return content
+
+                    # Safety block check
+                    finish_reason = (
+                        candidates[0].get("finishReason", "")
+                    )
+                    if finish_reason == "SAFETY":
+                        print("⚠️  Gemini: Safety filter triggered")
+                    else:
+                        print(f"⚠️  Gemini: Empty content ({finish_reason})")
+                    return None
+
+                elif response.status_code == 429:
+                    print("⚠️  Gemini rate limited → next provider")
+                    return None
+
+                elif response.status_code == 400:
+                    err = response.json().get("error", {})
+                    print(f"❌ Gemini 400: {err.get('message','')[:100]}")
+                    return None
+
+                else:
+                    print(f"❌ Gemini {response.status_code}: {response.text[:100]}")
+                    return None
+
+        except httpx.TimeoutException:
+            print("⏰ Gemini timeout → next provider")
+            return None
+        except Exception as e:
+            print(f"❌ Gemini error: {e}")
+            return None
+
+
+
+# ════════════════════════════════════════════════
+# HUGGING FACE CLIENT (Free unlimited)
+# ════════════════════════════════════════════════
+
+class HuggingFaceClient:
+    """
+    Hugging Face Inference API
+    
+    ✅ FREE - Unlimited requests!
+    ⚠️  Slower cold start (20-30s first time)
+    ✅ No rate limits
+    
+    Best models (2025):
+    - Qwen/Qwen2.5-7B-Instruct (Multilingual, Hindi support)
+    - meta-llama/Llama-3.2-3B-Instruct (Fast, efficient)
+    - mistralai/Mistral-7B-Instruct-v0.3 (Good reasoning)
+    
+    Get token: https://huggingface.co/settings/tokens
+    """
+
+    BASE_URL = "https://api-inference.huggingface.co/models"
+
+    def __init__(self):
+        self.api_key = settings.HF_API_KEY
+        self.model   = settings.HF_MODEL
+
+    def is_configured(self) -> bool:
+        return bool(self.api_key and self.api_key.strip())
+
+    async def chat(
+        self,
+        system_prompt: str,
+        messages: List[Dict],
+        temperature: float = None,
+        max_tokens: int = None,
+    ) -> Optional[str]:
+        if not self.is_configured():
+            return None
+
+        temperature = temperature or settings.TEMPERATURE
+        max_tokens  = max_tokens or settings.MAX_TOKENS
+
+        # ── Format for instruction models ─────────────────
+        # Most HF models expect specific prompt format
+        prompt_parts = [f"<|system|>\n{system_prompt}\n"]
+        
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+            
+            if role == "user":
+                prompt_parts.append(f"<|user|>\n{content}\n")
+            elif role == "assistant":
+                prompt_parts.append(f"<|assistant|>\n{content}\n")
+        
+        prompt_parts.append("<|assistant|>\n")
+        prompt = "".join(prompt_parts)
+
+        # ── Alternative format for Qwen/Llama ─────────────
+        # If above doesn't work, try this simpler format:
+        simple_prompt = f"System: {system_prompt}\n\n"
+        for msg in messages:
+            role = "User" if msg["role"] == "user" else "Assistant"
+            simple_prompt += f"{role}: {msg['content']}\n"
+        simple_prompt += "Assistant:"
+
+        # Try complex format first, fallback to simple
+        prompts_to_try = [prompt, simple_prompt]
+
+        for attempt, prompt_text in enumerate(prompts_to_try, 1):
+            try:
+                async with httpx.AsyncClient(timeout=45.0) as client:
+                    response = await client.post(
+                        f"{self.BASE_URL}/{self.model}",
+                        headers={
+                            "Authorization": f"Bearer {self.api_key}",
+                            "Content-Type":  "application/json",
+                        },
+                        json={
+                            "inputs": prompt_text,
+                            "parameters": {
+                                "max_new_tokens": max_tokens,
+                                "temperature": temperature,
+                                "top_p": 0.9,
+                                "return_full_text": False,
+                                "do_sample": True,
+                            },
+                            "options": {
+                                "wait_for_model": True,
+                                "use_cache": False,
+                            }
+                        },
+                    )
+
+                    # ── Success ───────────────────────────────
+                    if response.status_code == 200:
+                        data = response.json()
+                        
+                        # Handle different response formats
+                        if isinstance(data, list) and len(data) > 0:
+                            if isinstance(data[0], dict):
+                                text = data[0].get("generated_text", "").strip()
+                            else:
+                                text = str(data[0]).strip()
+                        elif isinstance(data, dict):
+                            text = data.get("generated_text", "").strip()
+                        else:
+                            text = str(data).strip()
+
+                        if text:
+                            # Clean up common artifacts
+                            text = text.replace("<|assistant|>", "").strip()
+                            text = text.replace("Assistant:", "").strip()
+                            
+                            print(f"   ✅ HuggingFace: {len(text)} chars (attempt {attempt})")
+                            return text
+
+                    # ── Model loading ─────────────────────────
+                    elif response.status_code == 503:
+                        error_data = response.json()
+                        if "loading" in str(error_data).lower():
+                            wait_time = error_data.get("estimated_time", 20)
+                            print(f"⏳ HF model loading... (~{wait_time}s)")
+                            
+                            # Wait and retry once
+                            import asyncio
+                            await asyncio.sleep(min(wait_time + 5, 30))
+                            
+                            # Retry the request
+                            response = await client.post(
+                                f"{self.BASE_URL}/{self.model}",
+                                headers={
+                                    "Authorization": f"Bearer {self.api_key}",
+                                    "Content-Type": "application/json",
+                                },
+                                json={
+                                    "inputs": prompt_text,
+                                    "parameters": {
+                                        "max_new_tokens": max_tokens,
+                                        "temperature": temperature,
+                                        "return_full_text": False,
+                                    },
+                                    "options": {"wait_for_model": True}
+                                },
+                            )
+                            
+                            if response.status_code == 200:
+                                data = response.json()
+                                if isinstance(data, list) and data:
+                                    text = data[0].get("generated_text", "").strip()
+                                    if text:
+                                        print(f"   ✅ HF (after loading): {len(text)} chars")
+                                        return text
+                        
+                        print("⚠️  HF model still loading → next provider")
+                        return None
+
+                    # ── Rate limit (shouldn't happen on free tier) ─
+                    elif response.status_code == 429:
+                        print("⚠️  HF rate limit (unusual) → next")
+                        return None
+
+                    # ── Other errors ──────────────────────────
+                    else:
+                        if attempt == 1:
+                            print(f"⚠️  HF attempt {attempt} failed, trying simple format...")
+                            continue  # Try next format
+                        else:
+                            print(f"❌ HF {response.status_code}: {response.text[:150]}")
+                            return None
+
+            except httpx.TimeoutException:
+                if attempt == 1:
+                    print(f"⏰ HF timeout (attempt {attempt}), retrying...")
+                    continue
+                else:
+                    print("⏰ HF timeout → next provider")
+                    return None
+                    
+            except Exception as e:
+                print(f"❌ HF error (attempt {attempt}): {e}")
+                if attempt == len(prompts_to_try):
+                    return None
+
+        return None
+
+
+# ════════════════════════════════════════════════
+# OPENROUTER CLIENT
+# ════════════════════════════════════════════════
+
+class OpenRouterClient:
+    """
+    OpenRouter API - Access to 100+ LLMs via one API
+    
+    Free models (2025):
+    - google/gemini-2.0-flash-exp:free (Best free option)
+    - meta-llama/llama-3.1-8b-instruct:free
+    - mistralai/mistral-7b-instruct:free
+    - qwen/qwen-2-7b-instruct:free
+    
+    Sign up: https://openrouter.ai
+    Docs: https://openrouter.ai/docs
+    """
+
+    BASE_URL = "https://openrouter.ai/api/v1"
+
+    def __init__(self):
+        self.api_key = settings.OPENROUTER_API_KEY
+        self.model   = settings.OPENROUTER_MODEL
+
+    def is_configured(self) -> bool:
+        return bool(self.api_key and self.api_key.strip())
+
+    async def chat(
+        self,
+        system_prompt: str,
+        messages: List[Dict],
+        temperature: float = None,
+        max_tokens: int = None,
+    ) -> Optional[str]:
+        if not self.is_configured():
+            return None
+
+        temperature = temperature or settings.TEMPERATURE
+        max_tokens  = max_tokens or settings.MAX_TOKENS
+
+        full_messages = [
+            {"role": "system", "content": system_prompt},
+            *messages
+        ]
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{self.BASE_URL}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type":  "application/json",
+                        "HTTP-Referer":  "https://skolify.in",
+                        "X-Title":       "Skolify AI Assistant",
+                    },
+                    json={
+                        "model":       self.model,
+                        "messages":    full_messages,
+                        "temperature": temperature,
+                        "max_tokens":  max_tokens,
+                    },
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    content = data["choices"][0]["message"]["content"].strip()
+                    usage = data.get("usage", {})
+                    print(f"   ✅ OpenRouter: {usage.get('total_tokens', '?')} tokens")
+                    return content
+
+                elif response.status_code == 429:
+                    print("⚠️  OpenRouter rate limit → next")
+                    return None
+
+                elif response.status_code == 402:
+                    print("⚠️  OpenRouter: Credits exhausted → next")
+                    return None
+
+                else:
+                    print(f"❌ OpenRouter {response.status_code}: {response.text[:100]}")
+                    return None
+
+        except httpx.TimeoutException:
+            print("⏰ OpenRouter timeout → next")
+            return None
+        except Exception as e:
+            print(f"❌ OpenRouter error: {e}")
+            return None
+
+
+# ════════════════════════════════════════════════
+# DEEPSEEK CLIENT
+# ════════════════════════════════════════════════
+
+class DeepSeekClient:
+    """
+    DeepSeek API - Best value LLM in 2025
+    
+    Model: deepseek-chat (Jan 2025)
+    - Better than GPT-4 on many benchmarks
+    - 64K context window
+    - Pricing: $0.14 per 1M input tokens, $0.28 per 1M output
+    - Rate: 60 requests/minute
+    
+    $1 = ~7 million tokens (99% cheaper than GPT-4)
+    
+    Sign up: https://platform.deepseek.com
+    """
+
+    BASE_URL = "https://api.deepseek.com/v1"
+
+    def __init__(self):
+        self.api_key = settings.DEEPSEEK_API_KEY
+        self.model   = settings.DEEPSEEK_MODEL
+
+    def is_configured(self) -> bool:
+        return bool(self.api_key and self.api_key.strip())
+
+    async def chat(
+        self,
+        system_prompt: str,
+        messages: List[Dict],
+        temperature: float = None,
+        max_tokens: int = None,
+    ) -> Optional[str]:
+        if not self.is_configured():
+            return None
+
+        temperature = temperature or settings.TEMPERATURE
+        max_tokens  = max_tokens or settings.MAX_TOKENS
+
+        full_messages = [
+            {"role": "system", "content": system_prompt},
+            *messages
+        ]
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{self.BASE_URL}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type":  "application/json",
+                    },
+                    json={
+                        "model":       self.model,
+                        "messages":    full_messages,
+                        "temperature": temperature,
+                        "max_tokens":  max_tokens,
+                        "stream":      False,
+                    },
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    content = data["choices"][0]["message"]["content"].strip()
+                    usage = data.get("usage", {})
+                    total_tokens = usage.get("total_tokens", 0)
+                    cost = (total_tokens / 1_000_000) * 0.14  # Rough estimate
+                    print(f"   ✅ DeepSeek: {total_tokens} tokens (~${cost:.4f})")
+                    return content
+
+                elif response.status_code == 429:
+                    print("⚠️  DeepSeek rate limit → next")
+                    return None
+
+                elif response.status_code == 401:
+                    print("❌ DeepSeek: Invalid API key")
+                    return None
+
+                elif response.status_code == 402:
+                    print("❌ DeepSeek: Insufficient credits")
+                    return None
+
+                else:
+                    print(f"❌ DeepSeek {response.status_code}: {response.text[:100]}")
+                    return None
+
+        except httpx.TimeoutException:
+            print("⏰ DeepSeek timeout → next")
+            return None
+        except Exception as e:
+            print(f"❌ DeepSeek error: {e}")
+            return None
+
+
+# ════════════════════════════════════════════════
+# UPDATED LLM MANAGER (2025 Edition)
+# ════════════════════════════════════════════════
+
+class LLMManager:
+    """
+    Multi-provider LLM orchestrator with intelligent fallback
+    
+    🎯 2025 Provider Chain:
+    1. Groq        → Fastest (30 RPM, 14K RPD free)
+    2. Gemini 2.0  → Latest (Unlimited experimental)
+    3. OpenRouter  → Multi-model (100+ options)
+    4. DeepSeek    → Best value ($0.14/1M tokens)
+    5. HuggingFace → Unlimited free (slower cold start)
+    
+    ✅ PRIVACY GUARANTEED:
+    - Portal data → NEVER sent to ANY provider
+    - Only public website info sent to LLMs
+    """
+
+    def __init__(self):
+        self.providers: Dict[str, any] = {
+            "groq":        GroqClient(),
+            "gemini":      GeminiClient(),
+            "openrouter":  OpenRouterClient(),
+            "deepseek":    DeepSeekClient(),
+            "huggingface": HuggingFaceClient(),
+        }
+
+        self.provider_order = [
+            p.strip()
+            for p in settings.LLM_PROVIDER_ORDER.split(",")
+            if p.strip() in self.providers
+        ]
+
+        self._log_status()
+
+    def _log_status(self):
+        print("\n🤖 LLM Provider Chain (2025):")
+        
+        rate_info = {
+            "groq":        "⚡ 30 RPM, 14K RPD",
+            "gemini":      "🆕 Unlimited (exp)",
+            "openrouter":  "🎯 100+ models",
+            "deepseek":    "💎 60 RPM, $0.14/1M",
+            "huggingface": "♾️  Unlimited free",
+        }
+        
+        for i, name in enumerate(self.provider_order, 1):
+            client = self.providers[name]
+            configured = client.is_configured()
+            
+            status_icon = "✅" if configured else "❌"
+            status_text = "ready" if configured else "no key"
+            
+            print(
+                f"   {i}. {name:12} "
+                f"{status_icon} {status_text:8} "
+                f"{rate_info.get(name, '')}"
+            )
+        
+        if not self.is_any_configured():
+            print("   ⚠️  No LLM configured → local fallback only")
+        
+        if settings.ENABLE_RESPONSE_CACHE:
+            print(f"\n   💾 Response cache enabled ({settings.CACHE_TTL_SECONDS}s TTL)")
+        
+        print()
+
+    def is_any_configured(self) -> bool:
+        """Check if at least one provider is configured"""
+        return any(
+            self.providers[name].is_configured()
+            for name in self.provider_order
+        )
+
+    async def chat(
+        self,
+        system_prompt: str,
+        messages: List[Dict],
+        temperature: float = None,
+        max_tokens: int = None,
+    ) -> tuple[Optional[str], str]:
+        """
+        Try providers in order until one succeeds
+        
+        Args:
+            system_prompt: System instructions
+            messages: Chat history
+            temperature: Sampling temperature (0-1)
+            max_tokens: Max response length
+            
+        Returns:
+            (response_text, provider_used)
+            provider_used: "groq"|"gemini"|"openrouter"|"deepseek"|"huggingface"|"none"
+        """
+
+        for provider_name in self.provider_order:
+            client = self.providers.get(provider_name)
+
+            # Skip if not configured
+            if not client or not client.is_configured():
+                continue
+
+            print(f"🔄 Trying {provider_name}...")
+
+            try:
+                result = await client.chat(
+                    system_prompt=system_prompt,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+
+                if result:
+                    # Success!
+                    return result, provider_name
+
+                # Failed → try next provider
+                print(f"   ↳ {provider_name} failed, trying next...")
+
+            except Exception as e:
+                print(f"   ↳ {provider_name} exception: {e}")
+                continue
+
+        # All providers failed
+        print("❌ All LLM providers failed → local fallback")
+        return None, "none"
+
+
+# ════════════════════════════════════════════════
+# SINGLETONS
+# ════════════════════════════════════════════════
+
+_hf_client: Optional[HuggingFaceClient] = None
+_openrouter_client: Optional[OpenRouterClient] = None
+_deepseek_client: Optional[DeepSeekClient] = None
+_llm_manager: Optional[LLMManager] = None
+
+
+def get_hf_client() -> HuggingFaceClient:
+    """Get HuggingFace client singleton"""
+    global _hf_client
+    if _hf_client is None:
+        _hf_client = HuggingFaceClient()
+        status = "✅ ready" if _hf_client.is_configured() else "❌ no token"
+        print(f"HuggingFace: {status}")
+    return _hf_client
+
+
+def get_openrouter_client() -> OpenRouterClient:
+    """Get OpenRouter client singleton"""
+    global _openrouter_client
+    if _openrouter_client is None:
+        _openrouter_client = OpenRouterClient()
+        status = "✅ ready" if _openrouter_client.is_configured() else "❌ no key"
+        print(f"OpenRouter: {status}")
+    return _openrouter_client
+
+
+def get_deepseek_client() -> DeepSeekClient:
+    """Get DeepSeek client singleton"""
+    global _deepseek_client
+    if _deepseek_client is None:
+        _deepseek_client = DeepSeekClient()
+        status = "✅ ready" if _deepseek_client.is_configured() else "❌ no key"
+        print(f"DeepSeek: {status}")
+    return _deepseek_client
+
+
+def get_llm_manager() -> LLMManager:
+    """
+    Get LLM Manager singleton
+    
+    ⭐ USE THIS in chat.py and portal_chat.py
+    
+    Automatically handles:
+    - Multi-provider fallback
+    - Rate limiting
+    - Error handling
+    - Response caching
+    """
+    global _llm_manager
+    if _llm_manager is None:
+        _llm_manager = LLMManager()
+    return _llm_manager
