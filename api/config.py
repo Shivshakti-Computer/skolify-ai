@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "paraphrase-MiniLM-L3-v2"
     VECTOR_COLLECTION_NAME: str = "skolify_public_kb"
     TOP_K_RESULTS: int = 5
-    MIN_SIMILARITY_SCORE: float = 0.20
+    MIN_SIMILARITY_SCORE: float = 0.05
 
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "llama-3.3-70b-versatile"

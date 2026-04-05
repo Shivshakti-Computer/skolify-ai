@@ -69,7 +69,6 @@ def search_knowledge_base(query: str, n: int = 5) -> List[Dict]:
         model = get_embedding_model()
         collection = get_collection()
 
-        # ✅ Collection None hone par gracefully handle karo
         if collection is None:
             print("⚠️  ChromaDB unavailable - skipping search")
             return []
@@ -91,8 +90,14 @@ def search_knowledge_base(query: str, n: int = 5) -> List[Dict]:
             results["metadatas"][0],
             results["distances"][0],
         ):
+            # ✅ FIX: Cosine distance (0-2) ko similarity (0-1) mein convert
+            # dist=0 → perfect match → score=1.0
+            # dist=2 → opposite → score=0.0
             score = max(0.0, 1.0 - (dist / 2.0))
-            if score >= settings.MIN_SIMILARITY_SCORE:
+
+            # ✅ FIX: Threshold lower karo
+            # paraphrase-MiniLM-L3-v2 ke liye 0.05 theek hai
+            if score >= 0.05:
                 chunks.append({
                     "text": doc,
                     "url": meta.get("url", ""),
@@ -100,6 +105,7 @@ def search_knowledge_base(query: str, n: int = 5) -> List[Dict]:
                     "score": round(score, 3),
                 })
 
+        print(f"   Scores: {[c['score'] for c in chunks]}")
         return sorted(chunks, key=lambda x: x["score"], reverse=True)
 
     except Exception as e:
