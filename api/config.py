@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     # ✅ Change 2: Default production
     APP_ENV: str = os.environ.get("APP_ENV", "production")
 
-    ENABLE_PORTAL_MODE: bool = False
+    ENABLE_PORTAL_MODE: bool = True
 
     class Config:
         env_file = ".env"

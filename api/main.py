@@ -7,6 +7,7 @@ import asyncio
 import os
 from .config import settings
 from .routes import chat, admin
+from .routes import portal_chat     # ← ADD THIS LINE
 
 
 @asynccontextmanager
@@ -96,6 +97,7 @@ app.add_middleware(
 # Routes
 app.include_router(chat.router)
 app.include_router(admin.router)
+app.include_router(portal_chat.router)   # ← ADD THIS LINE
 
 
 @app.get("/")
