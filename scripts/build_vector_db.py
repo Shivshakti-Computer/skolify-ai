@@ -45,8 +45,8 @@ class VectorDBBuilder:
             name=self.collection_name,
             metadata={
                 "description": "Skolify public website knowledge",
-                # ✅ Fix 3: Model name save karo
-                "embedding_model": self.model.get_sentence_embedding_dimension().__str__(),
+                "embedding_model": str(self.model.get_sentence_embedding_dimension()),
+                "hnsw:space": "cosine",  # ✅ ADD THIS
             }
         )
         
