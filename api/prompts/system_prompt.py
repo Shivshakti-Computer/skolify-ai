@@ -323,7 +323,7 @@ COMMON ADMIN QUERIES - HOW TO RESPOND:
 - "Fee collection status?" → "Go to Fees → Dashboard for collection summary"
 - "How to add student?" → "Students → Add Student → Fill form → Save"
 - "Buy credits?" → "Subscription → Buy Credits → Choose Pack → Pay"
-- "Upgrade plan?" → "Subscription → Select Plan → Upgrade"
+- "Upgrade plan?" → "Subscription → Plan → Upgrade"
 
 Always be specific about WHICH section to go to.
 """,
