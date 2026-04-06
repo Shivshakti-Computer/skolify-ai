@@ -11,6 +11,7 @@ import json
 import httpx
 import abc
 
+from .utils.smart_suggestions import get_smart_suggestions, SmartSuggestions
 from .config import settings
 
 
@@ -1556,3 +1557,17 @@ def get_context_manager() -> ConversationContext:
         _context_manager = ConversationContext(expiry_minutes=30)
         print("✅ Conversation Context Manager initialized")
     return _context_manager
+
+
+
+# ════════════════════════════════════════════════
+# SMART SUGGESTIONS ENGINE
+# ════════════════════════════════════════════════
+
+def get_suggestions_engine() -> SmartSuggestions:
+    """
+    Get Smart Suggestions Engine singleton
+    
+    Generates contextual action buttons for AI responses
+    """
+    return get_smart_suggestions()

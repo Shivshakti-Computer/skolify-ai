@@ -12,7 +12,7 @@ import re
 import httpx
 from datetime import datetime, timedelta
 
-from ..dependencies import get_llm_manager, get_conv_store, get_context_manager
+from ..dependencies import get_llm_manager, get_conv_store, get_context_manager, get_suggestions_engine
 from ..config import settings
 from ..prompts.system_prompt import (
     PORTAL_SYSTEM_PROMPT,
@@ -1455,15 +1455,40 @@ async def portal_chat(request: PortalChatRequest):
         # ── Save ───────────────────────────────────────────
         store.add_messages(
             conv_id=conv_id,
-            user_msg=request.message,  # ✅ Save original message
+            user_msg=request.message,
             ai_msg=ai_response,
         )
+
+        # ✅ Generate smart suggestions
+        smart_suggestions = []
+        if tool_used and tool_intent:
+            suggestions_engine = get_suggestions_engine()
+            smart_suggestions = suggestions_engine.get_suggestions(
+                tool=tool_intent['tool'],
+                data=tool_data,
+                role=role,
+                max_suggestions=4
+            )
+            
+            if smart_suggestions:
+                print(f"💡 Generated {len(smart_suggestions)} smart suggestions")
+
+        # ✅ FIX: Decide which quick replies to show
+        if smart_suggestions:
+            # Use smart suggestions (context-aware)
+            final_quick_replies = smart_suggestions
+            print(f"✨ Using smart suggestions instead of defaults")
+        else:
+            # Use default quick replies
+            final_quick_replies = get_portal_quick_replies(role)
+            print(f"📋 Using default quick replies")
 
         print(
             f"✅ Portal done | "
             f"Provider={provider_used} | "
             f"Tool={tool_intent['tool'] if tool_intent else 'none'} | "
-            f"ContextResolved={was_resolved}"
+            f"ContextResolved={was_resolved} | "
+            f"QuickReplies={len(final_quick_replies)}"
         )
 
         return PortalChatResponse(
@@ -1471,7 +1496,8 @@ async def portal_chat(request: PortalChatRequest):
             answer=ai_response,
             conversation_id=conv_id,
             sources=[],
-            quickReplies=get_portal_quick_replies(role),
+            # ✅ FIX: Only ONE set of quick replies
+            quickReplies=final_quick_replies,
             canForward=True,
             metadata={
                 "llm_used":           not tool_used,
@@ -1486,9 +1512,11 @@ async def portal_chat(request: PortalChatRequest):
                 "tool_name":          tool_intent['tool'] if tool_intent else None,
                 "data_sent_to_llm":   False,
                 "data_privacy":       "guaranteed",
-                # ✅ NEW: Context metadata
                 "context_resolved":   was_resolved,
                 "original_message":   request.message if was_resolved else None,
+                # ✅ Metadata for debugging
+                "has_smart_suggestions": len(smart_suggestions) > 0,
+                "reply_type":         "smart" if smart_suggestions else "default",
             },
         )
 
