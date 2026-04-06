@@ -1533,3 +1533,26 @@ def get_llm_manager() -> LLMManager:
     if _llm_manager is None:
         _llm_manager = LLMManager()
     return _llm_manager
+
+
+
+# ════════════════════════════════════════════════
+# CONVERSATION CONTEXT MANAGER
+# ════════════════════════════════════════════════
+
+from .utils.conversation_context import ConversationContext
+
+_context_manager: Optional[ConversationContext] = None
+
+def get_context_manager() -> ConversationContext:
+    """
+    Get ConversationContext singleton
+    
+    Tracks conversation topics for intelligent follow-ups
+    """
+    global _context_manager
+    if _context_manager is None:
+        # Context expires after 30 minutes of inactivity
+        _context_manager = ConversationContext(expiry_minutes=30)
+        print("✅ Conversation Context Manager initialized")
+    return _context_manager
