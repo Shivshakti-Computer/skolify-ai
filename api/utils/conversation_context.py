@@ -90,116 +90,106 @@ class ConversationContext:
             print(f"🗑️  Context cleared: {conv_id[:8]}")
     
     def resolve_message(
-        self, 
-        message: str, 
+        self,
+        message: str,
         conv_id: str,
-        role: str
+        role:    str,
     ) -> tuple[str, bool]:
         """
         Resolve pronouns and context-dependent queries
         
-        Args:
-            message: User's message
-            conv_id: Conversation ID
-            role: User role
-        
-        Returns:
-            (resolved_message, was_resolved)
+        ✅ FIXED: Don't resolve if message is a new command/topic
         """
         context = self.get_context(conv_id)
-        
+
         if not context:
             return message, False
-        
-        topic = context['topic']
-        data = context['data']
+
+        topic     = context['topic']
+        data      = context['data']
         msg_lower = message.lower().strip()
-        
-        # ══════════════════════════════════════════════════
-        # PRONOUN RESOLUTION
-        # ══════════════════════════════════════════════════
+
+        # ✅ CRITICAL FIX: Don't resolve if message is a clear new topic
+        # These indicate user wants something NEW, not follow-up
+        new_topic_signals = [
+            # Action commands
+            'bhejo', 'send', 'create', 'banao', 'mark',
+            'promote', 'generate', 'dikhao', 'show',
+            # Navigation
+            'lets start', 'new task', 'new chat', 'start new',
+            'nayi baat', 'alag kaam',
+            # New questions with full context
+            'school closed', 'holiday', 'exam', 'salary',
+            'email to', 'sms to', 'message to',
+            'sab parents', 'all parents', 'all students',
+        ]
+
+        # ✅ If message clearly starts a new topic, don't resolve
+        if any(signal in msg_lower for signal in new_topic_signals):
+            # But allow follow-ups like "kaun kaun?" or "list dikhao"
+            # Only block if message has meaningful new content
+            word_count = len(msg_lower.split())
+            if word_count > 3:  # Short messages = follow-ups, Long = new topic
+                return message, False
+
+        # ✅ Don't resolve pending_command context
+        # It's handled separately in portal_chat.py
+        if topic == 'pending_command':
+            return message, False
+
+        # ── Pronoun Resolution ─────────────────────────────
+        # (rest of existing code stays same)
         
         # ── "kaun kaun?" / "who?" ─────────────────────────
         if self._is_pronoun_query(msg_lower, ['kaun', 'who', 'kon']):
-            
             if topic == 'get_fee_summary':
-                print(f"🔄 Resolved: 'kaun kaun' → pending fees list")
                 return "pending fees list dikhao", True
-            
             if topic == 'get_attendance_today':
-                if 'absent' in data or data.get('absent', 0) > 0:
-                    print(f"🔄 Resolved: 'kaun kaun' → absent students")
+                if data.get('absent', 0) > 0:
                     return "absent students kaun hain", True
-            
             if topic == 'get_student_count':
-                print(f"🔄 Resolved: 'kaun kaun' → students list")
                 return "students ki list dikhao", True
-        
+
         # ── "kitne?" / "how many?" ────────────────────────
         if self._is_pronoun_query(msg_lower, ['kitne', 'how many', 'kitna']):
-            
             if topic == 'get_fee_summary':
-                # Check what they're asking about
                 if any(w in msg_lower for w in ['pending', 'baaki', 'due']):
-                    print(f"🔄 Resolved: 'kitne pending' → pending amount")
                     return "total pending fee kitni hai", True
                 if any(w in msg_lower for w in ['collect', 'aaya', 'paid']):
-                    print(f"🔄 Resolved: 'kitne collected' → collected amount")
                     return "total collected fee kitni hai", True
-            
             if topic == 'get_attendance_today':
                 if any(w in msg_lower for w in ['absent', 'nahi', 'missing']):
-                    print(f"🔄 Resolved: 'kitne absent' → absent count")
                     return "aaj kitne absent hain", True
                 if any(w in msg_lower for w in ['present', 'aaye', 'came']):
-                    print(f"🔄 Resolved: 'kitne present' → present count")
                     return "aaj kitne present hain", True
-            
             if topic == 'get_student_count':
-                print(f"🔄 Resolved: 'kitne students' → student count")
                 return "total students kitne hain", True
-        
-        # ── "list dikhao" / "show list" ───────────────────
+
+        # ── "list dikhao" ─────────────────────────────────
         if self._is_list_query(msg_lower):
-            
+            # ✅ FIX: Only resolve if it's ambiguous (no other context)
+            # Don't resolve if user has new topic in message
             if topic == 'get_fee_summary':
-                print(f"🔄 Resolved: 'list' → pending fees list")
                 return "pending fees ki list dikhao", True
-            
             if topic == 'get_attendance_today':
-                print(f"🔄 Resolved: 'list' → absent list")
                 return "absent students ki list", True
-            
-            if topic == 'get_student_count':
-                print(f"🔄 Resolved: 'list' → all students")
-                return "students ki list dikhao", True
-        
-        # ── "details" / "zyada batao" ─────────────────────
+
+        # ── "details" ─────────────────────────────────────
         if self._is_details_query(msg_lower):
-            
             if topic == 'get_school_stats':
-                print(f"🔄 Resolved: 'details' → attendance details")
                 return "aaj ki attendance dikhao", True
-            
             if topic == 'get_attendance_today':
-                print(f"🔄 Resolved: 'details' → absent list")
                 return "absent students kaun hain", True
-        
-        # ── "send SMS" / "message bhejo" ──────────────────
+
+        # ── "send SMS" after attendance ───────────────────
         if self._is_action_query(msg_lower, ['sms', 'message', 'bhejo', 'send']):
-            
             if topic == 'get_attendance_today':
                 absent = data.get('absent', 0)
                 if absent > 0:
-                    print(f"🔄 Resolved: 'SMS bhejo' → send absent SMS")
-                    return f"send sms to {absent} absent students", True
-        
-        # ── "download report" / "report download" ─────────
-        if self._is_action_query(msg_lower, ['download', 'report', 'excel']):
-            
-            if topic in ['get_fee_summary', 'get_attendance_summary']:
-                print(f"🔄 Resolved: 'download' → generate report")
-                return f"download {topic.replace('get_', '')} report", True
+                    # ✅ FIX: Only if message is short/ambiguous
+                    word_count = len(msg_lower.split())
+                    if word_count <= 5:
+                        return f"send sms to {absent} absent students", True
         
         # ══════════════════════════════════════════════════
         # ENTITY RESOLUTION

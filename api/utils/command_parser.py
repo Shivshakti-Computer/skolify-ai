@@ -286,16 +286,6 @@ class AdminCommandParser:
     def _parse_send_fee_reminder(
         self, msg: str, original: str
     ) -> Optional[ParsedCommand]:
-        """
-        Detect fee reminder commands
-
-        Examples:
-        - "fee reminder bhejo sab parents ko"
-        - "pending fee wale parents ko SMS karo"
-        - "fee defaulters ko message karo"
-        - "send fee reminder to all"
-        - "WhatsApp karo fee pending walo ko"
-        """
         fee_reminder_patterns = [
             'fee reminder',
             'fee.*sms', 'sms.*fee',
@@ -306,20 +296,28 @@ class AdminCommandParser:
             'fee pending.*parents',
             'fee reminder bhejo',
             'fee walo ko',
+            # ✅ NEW
+            'fee reminder.*sab',
+            'sab.*fee reminder',
+            'fee bhejo',
+            'reminder bhejo.*fee',
         ]
 
         if not any(re.search(p, msg) for p in fee_reminder_patterns):
             return None
 
-        # Channel
+        # ✅ FIX: "sb" = "sab" in Hinglish
         channel = 'sms'
         if 'whatsapp' in msg:
             channel = 'whatsapp'
         elif 'email' in msg or 'mail' in msg:
             channel = 'email'
 
-        cls     = self._extract_class(msg, context='from')
-        section = self._extract_section(msg)
+        # ✅ FIX: Normalize "sb" → "sab"
+        normalized = msg.replace(' sb ', ' sab ')
+
+        cls     = self._extract_class(normalized, context='from')
+        section = self._extract_section(normalized)
 
         return ParsedCommand(
             command_type=CommandType.SEND_FEE_REMINDER,

@@ -1681,10 +1681,35 @@ async def portal_chat(request: PortalChatRequest):
                         )
 
                     else:
-                        ai_response = (
-                            "⚠️ Command cannot be executed. "
-                            "Please check the details."
-                        )
+                        # ✅ FIX: Check WHY it cannot execute
+                        students_count = preview_data.get('students_count', 0)
+                        error_msg      = preview_data.get('error', '')
+
+                        if students_count == 0:
+                            from_class = parsed_cmd.params.get('from_class', '?')
+                            to_class   = parsed_cmd.params.get('to_class', '?')
+                            
+                            ai_response = (
+                                f"⚠️ **No students found in Class {from_class}**\n\n"
+                                f"Current academic year mein Class {from_class} mein "
+                                f"koi active student nahi hai.\n\n"
+                                f"**Possible reasons:**\n"
+                                f"• Students already promoted\n"
+                                f"• Students in different academic year\n"
+                                f"• Class {from_class} mein koi enrolled nahi\n\n"
+                                f"📍 Check **Students → Class {from_class}** section."
+                            )
+                        elif error_msg:
+                            ai_response = (
+                                f"⚠️ **Preview failed**\n\n"
+                                f"Error: {error_msg}\n\n"
+                                f"Please try again."
+                            )
+                        else:
+                            ai_response = (
+                                "⚠️ **Command cannot be executed.**\n\n"
+                                "Please check the details and try again."
+                            )
 
                     store.add_messages(
                         conv_id=conv_id,
@@ -1785,13 +1810,29 @@ async def portal_chat(request: PortalChatRequest):
             )
             print(f"✅ Formatted locally (zero data to LLM) 🔒")
 
-            entities = context_mgr.extract_entities(message, tool_data)
-            context_mgr.set_context(
-                conv_id=conv_id,
-                topic=tool_intent['tool'],
-                data=tool_data,
-                entities=entities
-            )
+            # ✅ FIX: Only save context for tools that benefit from follow-ups
+            # Don't save context for tools where follow-up resolution causes issues
+            CONTEXT_WORTHY_TOOLS = {
+                'get_fee_summary',
+                'get_attendance_today',
+                'get_student_count',
+                'get_school_stats',
+                'get_pending_fees',
+            }
+
+            if tool_intent['tool'] in CONTEXT_WORTHY_TOOLS:
+                entities = context_mgr.extract_entities(message, tool_data)
+                context_mgr.set_context(
+                    conv_id=conv_id,
+                    topic=tool_intent['tool'],
+                    data=tool_data,
+                    entities=entities
+                )
+                print(f"📝 Context saved for follow-ups: {tool_intent['tool']}")
+            else:
+                # Clear context for one-off tools
+                context_mgr.clear_context(conv_id)
+                print(f"🗑️  Context cleared (not context-worthy tool)")
 
         else:
             system_prompt = PORTAL_SYSTEM_PROMPT.format(
