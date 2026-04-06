@@ -10,8 +10,9 @@ from typing import List, Optional, Dict, Any
 import uuid
 import re
 import httpx
+from datetime import datetime, timedelta
 
-from ..dependencies import get_llm_manager, get_conv_store
+from ..dependencies import get_llm_manager, get_conv_store, get_context_manager
 from ..config import settings
 from ..prompts.system_prompt import (
     PORTAL_SYSTEM_PROMPT,
@@ -1303,6 +1304,11 @@ async def portal_chat(request: PortalChatRequest):
     """
     Portal chat endpoint - School-specific assistant
     
+    ✅ NEW: Context-aware conversations
+    - Resolves pronouns ("kaun kaun?")
+    - Remembers last topic
+    - Intelligent follow-ups
+    
     ✅ PRIVACY ARCHITECTURE:
     1. Tool data → Formatted locally (NO LLM)
     2. General questions → LLM (no sensitive data)
@@ -1333,6 +1339,22 @@ async def portal_chat(request: PortalChatRequest):
             user_role=role,
             user_id=request.user_id,
         )
+
+        # ✅ NEW: Get context manager
+        context_mgr = get_context_manager()
+        
+        # ✅ NEW: Resolve message using context
+        resolved_message, was_resolved = context_mgr.resolve_message(
+            message, 
+            conv_id, 
+            role
+        )
+        
+        if was_resolved:
+            print(f"💡 Context resolved:")
+            print(f"   Original: {message}")
+            print(f"   Resolved: {resolved_message}")
+            message = resolved_message  # Use resolved version
 
         # ── Tool Intent Detection ──────────────────────────
         tool_intent   = detect_tool_intent(message, role)
@@ -1375,6 +1397,15 @@ async def portal_chat(request: PortalChatRequest):
                 tool_intent['tool'], tool_data
             )
             print(f"✅ Formatted locally (zero data to LLM) 🔒")
+            
+            # ✅ NEW: Save context after successful tool call
+            entities = context_mgr.extract_entities(message, tool_data)
+            context_mgr.set_context(
+                conv_id=conv_id,
+                topic=tool_intent['tool'],
+                data=tool_data,
+                entities=entities
+            )
 
         else:
             # ── General question → LLM (no sensitive data) ─
@@ -1424,14 +1455,15 @@ async def portal_chat(request: PortalChatRequest):
         # ── Save ───────────────────────────────────────────
         store.add_messages(
             conv_id=conv_id,
-            user_msg=message,
+            user_msg=request.message,  # ✅ Save original message
             ai_msg=ai_response,
         )
 
         print(
             f"✅ Portal done | "
             f"Provider={provider_used} | "
-            f"Tool={tool_intent['tool'] if tool_intent else 'none'}"
+            f"Tool={tool_intent['tool'] if tool_intent else 'none'} | "
+            f"ContextResolved={was_resolved}"
         )
 
         return PortalChatResponse(
@@ -1454,6 +1486,9 @@ async def portal_chat(request: PortalChatRequest):
                 "tool_name":          tool_intent['tool'] if tool_intent else None,
                 "data_sent_to_llm":   False,
                 "data_privacy":       "guaranteed",
+                # ✅ NEW: Context metadata
+                "context_resolved":   was_resolved,
+                "original_message":   request.message if was_resolved else None,
             },
         )
 
@@ -1600,3 +1635,25 @@ def _get_model_name(provider: str) -> str:
         "none":            "template",
     }
     return model_map.get(provider, "unknown")
+
+
+# ════════════════════════════════════════════════
+# CONTEXT MANAGER STATS (DEBUG)
+# ════════════════════════════════════════════════
+
+@router.get("/context-stats")
+async def get_context_stats():
+    """
+    Get conversation context statistics
+    
+    Shows active contexts and topics
+    For debugging/monitoring
+    """
+    context_mgr = get_context_manager()
+    stats = context_mgr.get_stats()
+    
+    return {
+        "success": True,
+        "stats": stats,
+        "timestamp": datetime.now().isoformat()
+    }
