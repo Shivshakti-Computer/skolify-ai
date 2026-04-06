@@ -1571,3 +1571,26 @@ def get_suggestions_engine() -> SmartSuggestions:
     Generates contextual action buttons for AI responses
     """
     return get_smart_suggestions()
+
+
+
+# ════════════════════════════════════════════════
+# ADMIN COMMAND SYSTEM
+# ════════════════════════════════════════════════
+
+from .utils.command_parser import get_command_parser, AdminCommandParser
+from .utils.command_executor import get_command_executor, CommandExecutor
+from .utils.command_formatter import get_command_formatter, CommandFormatter
+
+
+def get_admin_command_parser() -> AdminCommandParser:
+    """Get command parser singleton"""
+    return get_command_parser()
+
+def get_admin_command_executor() -> CommandExecutor:
+    """Get command executor singleton"""
+    return get_command_executor()
+
+def get_admin_command_formatter() -> CommandFormatter:
+    """Get command formatter singleton"""
+    return get_command_formatter()

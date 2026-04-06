@@ -20,6 +20,10 @@ from ..prompts.system_prompt import (
     SUPERADMIN_SYSTEM_PROMPT,
 )
 
+from ..utils.command_parser import get_command_parser, CommandType
+from ..utils.command_executor import get_command_executor
+from ..utils.command_formatter import get_command_formatter
+
 router = APIRouter(prefix="/api", tags=["portal"])
 
 # ── Tool Endpoints ────────────────────────────────────────
@@ -65,6 +69,7 @@ class PortalChatResponse(BaseModel):
     quickReplies: List[Dict] = []
     canForward: bool = False
     metadata: Dict[str, Any] = {}
+
 
 
 # ════════════════════════════════════════════════
@@ -1295,25 +1300,113 @@ def get_portal_fallback(role: str, message: str) -> str:
     )
 
 
-# ════════════════════════════════════════════════
+async def _generate_message_template(params: Dict, llm_manager) -> str:
+    """
+    Generate message template using AI
+    
+    ✅ PRIVACY: Only template generation - no school data
+    Uses LLM only for creative writing, not data access
+    """
+    msg_type = params.get('message_type', 'general')
+    channel  = params.get('channel', 'sms').upper()
+    topic    = params.get('topic', '')
+
+    # System prompt for template generation only
+    template_prompt = f"""You are a school communication expert.
+Generate a professional {channel} template for Indian schools.
+Type: {msg_type}
+Topic: {topic}
+
+Rules:
+- Keep SMS under 160 characters
+- WhatsApp can be longer (300-400 chars)
+- Email should be formal
+- End with school name placeholder: -[School Name]
+- Include: Student Name, relevant details
+- Use placeholders like [Student Name], [Date], [Amount]
+- Be respectful and professional
+- Include Hindi/English mix if appropriate
+
+Return ONLY the message template, nothing else."""
+
+    # LLM se generate karo
+    response, provider = await llm_manager.chat(
+        system_prompt=template_prompt,
+        messages=[
+            {"role": "user", "content": f"Generate {msg_type} {channel} template for: {topic}"}
+        ],
+        temperature=0.7,
+        max_tokens=300,
+    )
+
+    if response:
+        return f"""✨ **{channel} Template Generated:**
+
+---
+{response}
+---
+
+**How to use:**
+• Replace `[Student Name]` with actual name
+• Replace `[Date]` with actual date
+• Replace `[Amount]` with fee amount
+
+**Send this?**
+Type **"send this to all parents"** or **"send to class 10"**
+Or **"modify"** to change the template."""
+
+    # Fallback templates
+    fallback = _get_fallback_template(msg_type, channel)
+    return f"""✨ **{channel} Template:**
+
+---
+{fallback}
+---
+
+Type **"send this"** to send or **"modify"** to change."""
+
+
+def _get_fallback_template(msg_type: str, channel: str) -> str:
+    """Fallback templates when LLM unavailable"""
+    templates = {
+        'holiday': (
+            "Dear Parent, School will remain CLOSED on [Date] "
+            "due to [Reason]. Classes will resume on [Next Date]. "
+            "-[School Name]"
+        ),
+        'exam': (
+            "Dear Parent, [Exam Name] will be held on [Date] "
+            "from [Time]. Please ensure [Student Name] brings "
+            "admit card and stationery. -[School Name]"
+        ),
+        'fee_reminder': (
+            "Dear Parent, fee of Rs.[Amount] for [Student Name] "
+            "is due on [Date]. Please pay to avoid late fine. "
+            "Pay online at portal. -[School Name]"
+        ),
+        'event': (
+            "Dear Parent, [Event Name] will be held on [Date] "
+            "at [Time]. Your presence is requested. "
+            "-[School Name]"
+        ),
+        'result': (
+            "Dear Parent, [Student Name]'s [Exam Name] result "
+            "is available. Please login to portal to view marks "
+            "and grade card. -[School Name]"
+        ),
+        'general': (
+            "Dear Parent, [Message]. Please contact school "
+            "for more details. -[School Name]"
+        ),
+    }
+    return templates.get(msg_type, templates['general'])
+
+# ══════════════════════════════════════════════════════════
 # PORTAL CHAT ENDPOINT
-# ════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════
 
 @router.post("/portal-chat", response_model=PortalChatResponse)
 async def portal_chat(request: PortalChatRequest):
-    """
-    Portal chat endpoint - School-specific assistant
-    
-    ✅ NEW: Context-aware conversations
-    - Resolves pronouns ("kaun kaun?")
-    - Remembers last topic
-    - Intelligent follow-ups
-    
-    ✅ PRIVACY ARCHITECTURE:
-    1. Tool data → Formatted locally (NO LLM)
-    2. General questions → LLM (no sensitive data)
-    3. Multi-provider fallback (rate limit handling)
-    """
     try:
         conv_id = request.conversation_id or str(uuid.uuid4())
         message = request.message.strip()
@@ -1325,7 +1418,6 @@ async def portal_chat(request: PortalChatRequest):
             f"[{role}@{request.tenant_id[-6:]}] "
             f"{message[:60]}..."
         )
-
         print(f"📋 Session Cookie: {'✅ Present' if request.session_cookie else '❌ MISSING'}")
         print(f"📋 Tenant ID: {request.tenant_id}")
         print(f"📋 User Role: {role}")
@@ -1340,21 +1432,317 @@ async def portal_chat(request: PortalChatRequest):
             user_id=request.user_id,
         )
 
-        # ✅ NEW: Get context manager
+        # ✅ Get context manager ONCE here
         context_mgr = get_context_manager()
-        
-        # ✅ NEW: Resolve message using context
+
+        # ✅ Resolve message using context
         resolved_message, was_resolved = context_mgr.resolve_message(
-            message, 
-            conv_id, 
+            message,
+            conv_id,
             role
         )
-        
+
         if was_resolved:
             print(f"💡 Context resolved:")
             print(f"   Original: {message}")
             print(f"   Resolved: {resolved_message}")
-            message = resolved_message  # Use resolved version
+            message = resolved_message
+
+        # ✅ CRITICAL FIX 1: Define msg_lower ONCE
+        # Fixes NameError: 'msg' is not defined
+        msg_lower = message.lower().strip()
+
+        # ══════════════════════════════════════════════════
+        # ADMIN COMMAND DETECTION
+        # ══════════════════════════════════════════════════
+
+        if role in ['admin', 'staff']:
+            cmd_parser    = get_command_parser()
+            cmd_executor  = get_command_executor()
+            cmd_formatter = get_command_formatter()
+
+            # ✅ CRITICAL FIX 2: Correct context retrieval
+            # get_context() returns:
+            # {
+            #   'topic': 'pending_command',
+            #   'data': {'pending_command': {...}},  ← nested!
+            #   'entities': {},
+            #   'timestamp': ...
+            # }
+            ctx = context_mgr.get_context(conv_id)
+
+            print(f"🔍 Raw context: {ctx}")
+
+            # ✅ CRITICAL FIX 3: Extract pending_cmd correctly
+            pending_cmd = None
+            if ctx:
+                topic = ctx.get('topic', '')
+                data  = ctx.get('data', {})
+
+                # Case 1: topic IS 'pending_command' and data has it nested
+                if topic == 'pending_command' and isinstance(data, dict):
+                    pending_cmd = data.get('pending_command')
+
+                # Case 2: data directly has command_type (flat structure)
+                if not pending_cmd and isinstance(data, dict):
+                    if 'command_type' in data:
+                        pending_cmd = data
+
+            print(f"🔍 Pending command found: {pending_cmd is not None}")
+            if pending_cmd:
+                print(f"🔍 Command type: {pending_cmd.get('command_type')}")
+
+            # ── Confirmation words ─────────────────────────
+            CONFIRM_WORDS = [
+                'confirm', 'yes', 'haan', 'ok', 'okay',
+                'bilkul', 'ha', 'proceed', 'karo', 'han',
+                'haa', 'theek hai', 'theek', 'sahi hai',
+                'kar do', 'kardo', 'done', 'go ahead',
+            ]
+
+            # ── Cancellation words ─────────────────────────
+            CANCEL_WORDS = [
+                'cancel', 'nahi', 'no', 'mat karo',
+                'band karo', 'ruko', 'stop', 'nai',
+                'nahi chahiye', 'rehne do', 'chodo',
+            ]
+
+            # ✅ CRITICAL FIX 4: Use msg_lower (not undefined 'msg')
+            is_confirm = pending_cmd and any(
+                w in msg_lower for w in CONFIRM_WORDS
+            )
+            is_cancel = pending_cmd and any(
+                w in msg_lower for w in CANCEL_WORDS
+            )
+
+            print(f"🔍 Is confirm: {is_confirm} | Is cancel: {is_cancel}")
+
+            if is_confirm:
+                print(f"✅ Executing confirmed: {pending_cmd['command_type']}")
+
+                from ..utils.command_parser import ParsedCommand
+                cmd = ParsedCommand(
+                    command_type=pending_cmd['command_type'],
+                    params=pending_cmd['params'],
+                    raw_message=pending_cmd['raw_message'],
+                )
+
+                result = await cmd_executor.execute(
+                    command=cmd,
+                    tenant_id=request.tenant_id,
+                    session_cookie=request.session_cookie or '',
+                )
+
+                ai_response = cmd_formatter.format_result(
+                    command_type=pending_cmd['command_type'],
+                    result=result,
+                    params=pending_cmd['params'],
+                )
+
+                # ✅ CRITICAL FIX 5: Clear context correctly
+                context_mgr.clear_context(conv_id)
+
+                store.add_messages(
+                    conv_id=conv_id,
+                    user_msg=request.message,
+                    ai_msg=ai_response,
+                )
+
+                return PortalChatResponse(
+                    success=True,
+                    answer=ai_response,
+                    conversation_id=conv_id,
+                    sources=[],
+                    quickReplies=get_portal_quick_replies(role),
+                    canForward=True,
+                    metadata={
+                        'command_executed': pending_cmd['command_type'],
+                        'portal_mode':      True,
+                        'data_sent_to_llm': False,
+                    },
+                )
+
+            elif is_cancel:
+                print(f"❌ Command cancelled by user")
+
+                # ✅ CRITICAL FIX 6: Clear context correctly
+                context_mgr.clear_context(conv_id)
+
+                ai_response = (
+                    "❌ **Command cancelled.**\n\n"
+                    "Koi aur kaam kar sakta hoon? 😊"
+                )
+
+                store.add_messages(
+                    conv_id=conv_id,
+                    user_msg=request.message,
+                    ai_msg=ai_response,
+                )
+
+                return PortalChatResponse(
+                    success=True,
+                    answer=ai_response,
+                    conversation_id=conv_id,
+                    sources=[],
+                    quickReplies=get_portal_quick_replies(role),
+                    canForward=True,
+                    metadata={
+                        'command_cancelled': True,
+                        'data_sent_to_llm':  False,
+                    },
+                )
+
+            # ✅ CRITICAL FIX 7: Only parse NEW command when
+            # NO pending command exists
+            elif not pending_cmd and request.session_cookie:
+                parsed_cmd = cmd_parser.parse(message, role)
+
+                if parsed_cmd:
+                    print(f"🎯 Admin command: {parsed_cmd.command_type}")
+
+                    if parsed_cmd.command_type == CommandType.GENERATE_MESSAGE:
+                        ai_response = await _generate_message_template(
+                            params=parsed_cmd.params,
+                            llm_manager=get_llm_manager(),
+                        )
+
+                        store.add_messages(
+                            conv_id=conv_id,
+                            user_msg=request.message,
+                            ai_msg=ai_response,
+                        )
+
+                        return PortalChatResponse(
+                            success=True,
+                            answer=ai_response,
+                            conversation_id=conv_id,
+                            sources=[],
+                            quickReplies=[
+                                {'text': '📨 Send this SMS', 'payload': 'send this message'},
+                                {'text': '✏️ Edit message',  'payload': 'modify the message'},
+                                {'text': '❌ Cancel',         'payload': 'cancel'},
+                            ],
+                            canForward=True,
+                            metadata={
+                                'command_type':     'generate_message',
+                                'data_sent_to_llm': False,
+                            },
+                        )
+
+                    preview_data = await cmd_executor.preview(
+                        command=parsed_cmd,
+                        tenant_id=request.tenant_id,
+                        session_cookie=request.session_cookie,
+                    )
+
+                    if preview_data.get('needs_content') or preview_data.get('needs_title'):
+                        ai_response = cmd_formatter.format_preview(
+                            command_type=parsed_cmd.command_type,
+                            preview_data=preview_data,
+                            params=parsed_cmd.params,
+                        )
+
+                        # ✅ CRITICAL FIX 8: Save context correctly
+                        # topic='pending_command'
+                        # data={'pending_command': {...}}
+                        # get_context() returns {'topic':..., 'data':..., ...}
+                        # retrieval: ctx['data']['pending_command']
+                        context_mgr.set_context(
+                            conv_id=conv_id,
+                            topic='pending_command',
+                            data={
+                                'pending_command': {
+                                    'command_type':  parsed_cmd.command_type,
+                                    'params':        parsed_cmd.params,
+                                    'raw_message':   parsed_cmd.raw_message,
+                                    'needs_content': True,
+                                }
+                            }
+                        )
+
+                    elif preview_data.get('ready_to_execute', True):
+                        ai_response = cmd_formatter.format_preview(
+                            command_type=parsed_cmd.command_type,
+                            preview_data=preview_data,
+                            params=parsed_cmd.params,
+                        )
+
+                        # ✅ CRITICAL FIX 9: Same correct structure
+                        context_mgr.set_context(
+                            conv_id=conv_id,
+                            topic='pending_command',
+                            data={
+                                'pending_command': {
+                                    'command_type': parsed_cmd.command_type,
+                                    'params':       {**parsed_cmd.params, **preview_data},
+                                    'raw_message':  parsed_cmd.raw_message,
+                                }
+                            }
+                        )
+
+                    else:
+                        ai_response = (
+                            "⚠️ Command cannot be executed. "
+                            "Please check the details."
+                        )
+
+                    store.add_messages(
+                        conv_id=conv_id,
+                        user_msg=request.message,
+                        ai_msg=ai_response,
+                    )
+
+                    return PortalChatResponse(
+                        success=True,
+                        answer=ai_response,
+                        conversation_id=conv_id,
+                        sources=[],
+                        quickReplies=[
+                            {'text': '✅ Confirm', 'payload': 'confirm'},
+                            {'text': '❌ Cancel',  'payload': 'cancel'},
+                        ],
+                        canForward=True,
+                        metadata={
+                            'command_type':          parsed_cmd.command_type,
+                            'portal_mode':           True,
+                            'data_sent_to_llm':      False,
+                            'awaiting_confirmation': True,
+                        },
+                    )
+
+            # ── pending_cmd exists but message is neither
+            # confirm nor cancel → remind user
+            elif pending_cmd:
+                print(f"⚠️ Pending command exists, waiting for confirm/cancel")
+                cmd_type = pending_cmd.get('command_type', 'command')
+
+                ai_response = (
+                    f"⏳ **Waiting for confirmation**\n\n"
+                    f"Ek command pending hai: `{cmd_type}`\n\n"
+                    f"Type **\"confirm\"** to proceed or **\"cancel\"** to abort."
+                )
+
+                store.add_messages(
+                    conv_id=conv_id,
+                    user_msg=request.message,
+                    ai_msg=ai_response,
+                )
+
+                return PortalChatResponse(
+                    success=True,
+                    answer=ai_response,
+                    conversation_id=conv_id,
+                    sources=[],
+                    quickReplies=[
+                        {'text': '✅ Confirm', 'payload': 'confirm'},
+                        {'text': '❌ Cancel',  'payload': 'cancel'},
+                    ],
+                    canForward=True,
+                    metadata={
+                        'awaiting_confirmation': True,
+                        'data_sent_to_llm':      False,
+                    },
+                )
 
         # ── Tool Intent Detection ──────────────────────────
         tool_intent   = detect_tool_intent(message, role)
@@ -1367,10 +1755,9 @@ async def portal_chat(request: PortalChatRequest):
         else:
             print(f"⚠️  No tool detected for: '{message}'")
             print(f"   Role: {role}")
-        
+
         if tool_intent and not request.session_cookie:
             print(f"❌ CRITICAL: Tool detected but NO SESSION COOKIE!")
-            print(f"   Tool will NOT be called - frontend must send session_cookie")
 
         if tool_intent and request.session_cookie:
             print(f"🔧 Tool: {tool_intent['tool']}")
@@ -1381,14 +1768,14 @@ async def portal_chat(request: PortalChatRequest):
                 session_cookie=request.session_cookie,
                 tenant_id=request.tenant_id,
             )
-        
+
         if tool_data:
             print(f"✅ Tool returned data: {list(tool_data.keys())}")
         else:
-            print(f"❌ Tool returned NO data (API call failed)")
+            print(f"❌ Tool returned NO data")
 
         # ══════════════════════════════════════════════════
-        # ✅ PRIVACY: Tool data → LOCAL format (NO LLM)
+        # PRIVACY: Tool data → LOCAL format (NO LLM)
         # ══════════════════════════════════════════════════
         if tool_data:
             tool_used     = True
@@ -1397,8 +1784,7 @@ async def portal_chat(request: PortalChatRequest):
                 tool_intent['tool'], tool_data
             )
             print(f"✅ Formatted locally (zero data to LLM) 🔒")
-            
-            # ✅ NEW: Save context after successful tool call
+
             entities = context_mgr.extract_entities(message, tool_data)
             context_mgr.set_context(
                 conv_id=conv_id,
@@ -1408,7 +1794,6 @@ async def portal_chat(request: PortalChatRequest):
             )
 
         else:
-            # ── General question → LLM (no sensitive data) ─
             system_prompt = PORTAL_SYSTEM_PROMPT.format(
                 school_name=school,
                 user_role=role,
@@ -1431,11 +1816,12 @@ async def portal_chat(request: PortalChatRequest):
             )
 
             if not ai_response:
-                is_data_request = any(w in message.lower() for w in [
+                # ✅ Use msg_lower (already defined above)
+                is_data_request = any(w in msg_lower for w in [
                     'how many', 'kitne', 'stats', 'count',
                     'present', 'absent', 'fees', 'attendance'
                 ])
-                
+
                 if is_data_request:
                     ai_response = (
                         "🔍 **Looking for data?**\n\n"
@@ -1448,7 +1834,7 @@ async def portal_chat(request: PortalChatRequest):
                     )
                 else:
                     ai_response = get_portal_fallback(role, message)
-                
+
                 provider_used = "local_fallback"
                 print("📋 All LLMs unavailable → smart fallback")
 
@@ -1459,27 +1845,23 @@ async def portal_chat(request: PortalChatRequest):
             ai_msg=ai_response,
         )
 
-        # ✅ Generate smart suggestions
+        # ── Smart Suggestions ──────────────────────────────
         smart_suggestions = []
         if tool_used and tool_intent:
             suggestions_engine = get_suggestions_engine()
-            smart_suggestions = suggestions_engine.get_suggestions(
+            smart_suggestions  = suggestions_engine.get_suggestions(
                 tool=tool_intent['tool'],
                 data=tool_data,
                 role=role,
-                max_suggestions=4
+                max_suggestions=4,
             )
-            
             if smart_suggestions:
                 print(f"💡 Generated {len(smart_suggestions)} smart suggestions")
 
-        # ✅ FIX: Decide which quick replies to show
         if smart_suggestions:
-            # Use smart suggestions (context-aware)
             final_quick_replies = smart_suggestions
-            print(f"✨ Using smart suggestions instead of defaults")
+            print(f"✨ Using smart suggestions")
         else:
-            # Use default quick replies
             final_quick_replies = get_portal_quick_replies(role)
             print(f"📋 Using default quick replies")
 
@@ -1496,27 +1878,25 @@ async def portal_chat(request: PortalChatRequest):
             answer=ai_response,
             conversation_id=conv_id,
             sources=[],
-            # ✅ FIX: Only ONE set of quick replies
             quickReplies=final_quick_replies,
             canForward=True,
             metadata={
-                "llm_used":           not tool_used,
-                "llm_provider":       provider_used,
-                "model":              _get_model_name(provider_used),
-                "context_chunks":     0,
-                "source":             "local_tool" if tool_used else f"ai_{provider_used}",
-                "portal_mode":        True,
-                "tenant_id":          request.tenant_id,
-                "role":               role,
-                "tool_used":          tool_used,
-                "tool_name":          tool_intent['tool'] if tool_intent else None,
-                "data_sent_to_llm":   False,
-                "data_privacy":       "guaranteed",
-                "context_resolved":   was_resolved,
-                "original_message":   request.message if was_resolved else None,
-                # ✅ Metadata for debugging
+                "llm_used":              not tool_used,
+                "llm_provider":          provider_used,
+                "model":                 _get_model_name(provider_used),
+                "context_chunks":        0,
+                "source":                "local_tool" if tool_used else f"ai_{provider_used}",
+                "portal_mode":           True,
+                "tenant_id":             request.tenant_id,
+                "role":                  role,
+                "tool_used":             tool_used,
+                "tool_name":             tool_intent['tool'] if tool_intent else None,
+                "data_sent_to_llm":      False,
+                "data_privacy":          "guaranteed",
+                "context_resolved":      was_resolved,
+                "original_message":      request.message if was_resolved else None,
                 "has_smart_suggestions": len(smart_suggestions) > 0,
-                "reply_type":         "smart" if smart_suggestions else "default",
+                "reply_type":            "smart" if smart_suggestions else "default",
             },
         )
 
@@ -1535,6 +1915,9 @@ async def portal_chat(request: PortalChatRequest):
             quickReplies=[{"text": "📞 Contact Support", "action": "forward"}],
             metadata={"error": str(e)},
         )
+
+
+
 
 
 # ════════════════════════════════════════════════
