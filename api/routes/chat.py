@@ -1,7 +1,8 @@
 # api/routes/chat.py
 # FIXES:
-# 1. Multi-provider LLM (Groq → Gemini fallback)
+# 1. Multi-provider LLM (5 providers with intelligent fallback)
 # 2. Public chat only - no sensitive data ever sent to LLM
+# 3. Response caching for rate limit reduction
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
@@ -12,7 +13,7 @@ import re
 from ..dependencies import (
     get_embedding_model,
     get_collection,
-    get_llm_manager,      # ✅ Multi-provider manager
+    get_llm_manager,      # ✅ Multi-provider manager (2025)
     get_conv_store,
 )
 from ..config import settings
@@ -56,10 +57,16 @@ class ChatResponse(BaseModel):
 
 
 # ════════════════════════════════════════════════
-# VECTOR SEARCH - Same as before
+# VECTOR SEARCH
 # ════════════════════════════════════════════════
 
 def search_knowledge_base(query: str, n: int = 5) -> List[Dict]:
+    """
+    Search Skolify public knowledge base
+    
+    ✅ PRIVACY: Only public website content indexed
+    No school data ever stored in vector DB
+    """
     try:
         model      = get_embedding_model()
         collection = get_collection()
@@ -102,6 +109,7 @@ def search_knowledge_base(query: str, n: int = 5) -> List[Dict]:
 
 
 def build_context_str(chunks: List[Dict]) -> str:
+    """Build context string from top chunks"""
     if not chunks:
         return ""
     parts = []
@@ -115,9 +123,11 @@ def build_context_str(chunks: List[Dict]) -> str:
 # ════════════════════════════════════════════════
 
 def extract_context(message: str) -> Dict:
+    """Extract metadata from user message"""
     updates   = {}
     msg_lower = message.lower()
 
+    # Extract student count if mentioned
     numbers = re.findall(r'\b(\d{2,5})\b', message)
     for n_str in numbers:
         n = int(n_str)
@@ -125,6 +135,7 @@ def extract_context(message: str) -> Dict:
             updates["student_count"] = n
             break
 
+    # Detect topic for smart replies
     topics = {
         "pricing":  ["price", "cost", "plan", "kitna", "₹", "rupee", "monthly", "yearly", "fee", "cheap"],
         "features": ["feature", "module", "offer", "include", "kya kya", "what can", "kya hota"],
@@ -148,6 +159,7 @@ def extract_context(message: str) -> Dict:
 # ════════════════════════════════════════════════
 
 def get_quick_replies(topic: str, role: str = "guest") -> List[Dict]:
+    """Get contextual quick reply buttons"""
     defaults = [
         {"text": "💰 Plans",        "payload": "admin_plans_overview"},
         {"text": "🎁 Free Trial",   "payload": "trial_info"},
@@ -203,7 +215,7 @@ FALLBACK_RESPONSES = {
         "Here are Skolify's plans:\n\n"
         "• **Starter** — ₹499/mo (500 students)\n"
         "• **Growth** — ₹999/mo (1,500 students) ⭐\n"
-        "• **Pro** — ₹1,999/mo (3,000 students)\n"
+        "• **Pro** — ₹1,999/mo (5,000 students)\n"
         "• **Enterprise** — ₹3,999/mo (Unlimited)\n\n"
         "✅ Annual = 2 months FREE\n"
         "✅ All plans: **60-day free trial**\n\n"
@@ -234,16 +246,24 @@ FALLBACK_RESPONSES = {
 
 
 def smart_fallback(message: str, context: Dict) -> str:
+    """
+    Smart template-based responses when all LLMs fail
+    
+    ✅ No external API dependency
+    """
     msg = message.lower()
 
+    # Greeting detection
     greetings = ["hi", "hello", "hey", "namaste", "hlo", "hii"]
     if any(msg.startswith(g) for g in greetings) or msg in greetings:
         return FALLBACK_RESPONSES["greeting"]
 
+    # Topic-based response
     topic = context.get("last_topic", "")
     if topic in FALLBACK_RESPONSES:
         return FALLBACK_RESPONSES[topic]
 
+    # Keyword-based detection
     if any(w in msg for w in ["price", "plan", "cost", "kitna"]):
         return FALLBACK_RESPONSES["pricing"]
     if any(w in msg for w in ["feature", "module", "offer"]):
@@ -260,6 +280,14 @@ def smart_fallback(message: str, context: Dict) -> str:
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
+    """
+    Public chat endpoint - Website visitor assistant
+    
+    ✅ PRIVACY ARCHITECTURE:
+    - Only public website content used as context
+    - No school/user data ever sent to LLM
+    - Multi-provider fallback for reliability
+    """
     try:
         conv_id = request.conversation_id or str(uuid.uuid4())
         message = request.message.strip()
@@ -319,7 +347,8 @@ async def chat(request: ChatRequest):
         ]
 
         # ── Multi-Provider LLM Call ────────────────────────
-        # ✅ RATE LIMIT FIX: Groq → Gemini → Together → Fallback
+        # ✅ RATE LIMIT FIX (2025): 
+        # Groq → Gemini → OpenRouter → DeepSeek → HuggingFace → Fallback
         llm                        = get_llm_manager()
         ai_response, provider_used = await llm.chat(
             system_prompt=system_prompt,
@@ -345,7 +374,7 @@ async def chat(request: ChatRequest):
         )
 
         # ── Quick Replies + Sources ────────────────────────
-        topic        = ctx_update.get("last_topic", "")
+        topic         = ctx_update.get("last_topic", "")
         quick_replies = get_quick_replies(topic, role)
         sources       = [
             Source(url=c["url"], page_type=c["page_type"], score=c["score"])
@@ -398,13 +427,22 @@ async def chat(request: ChatRequest):
 
 @router.get("/health")
 async def health():
+    """
+    System health check endpoint
+    
+    Returns status of:
+    - Vector DB
+    - LLM providers
+    - Conversation storage
+    """
     status = {
-        "api":      "healthy",
+        "api":       "healthy",
         "vector_db": "unknown",
-        "llm":      "unknown",
+        "llm":       "unknown",
         "documents": 0,
     }
-
+    
+    # Vector DB status
     try:
         col = get_collection()
         if col:
@@ -415,9 +453,9 @@ async def health():
     except Exception as e:
         status["vector_db"] = f"error: {str(e)}"
 
-    # ✅ Multi-provider status
+    # ✅ Multi-provider LLM status
     try:
-        llm    = get_llm_manager()
+        llm = get_llm_manager()
         status["llm"] = "multi_provider"
         status["providers"] = {
             name: client.is_configured()
@@ -427,6 +465,7 @@ async def health():
     except Exception:
         status["llm"] = "unknown"
 
+    # Conversation storage
     try:
         stats = get_conv_store().get_stats()
         status["conversations"] = stats
@@ -436,12 +475,23 @@ async def health():
     return status
 
 
-# ── Helper ────────────────────────────────────────────────
+# ════════════════════════════════════════════════
+# ✅ UPDATED HELPER - All 5 providers (2025)
+# ════════════════════════════════════════════════
+
 def _get_model_name(provider: str) -> str:
+    """
+    Get model name for metadata tracking
+    
+    Supports all 5 LLM providers:
+    - Groq, Gemini, OpenRouter, DeepSeek, HuggingFace
+    """
     models = {
         "groq":           settings.GROQ_MODEL,
         "gemini":         settings.GEMINI_MODEL,
-        "together":       settings.TOGETHER_MODEL,
+        "openrouter":     settings.OPENROUTER_MODEL,
+        "deepseek":       settings.DEEPSEEK_MODEL,
+        "huggingface":    settings.HF_MODEL,
         "local_fallback": "template",
         "none":           "template",
     }
