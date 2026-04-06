@@ -46,8 +46,7 @@ class Settings(BaseSettings):
     
     # 2️⃣ Gemini 2.0 (Latest, very capable)
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.0-flash-exp"
-    # Free experimental: Unlimited till Feb 2025
+    GEMINI_MODEL: str = "gemini-2.5-flash"  # ✅ UPDATED - Latest & fastest
     # Fallback: "gemini-1.5-flash" (15 RPM, 1500 RPD)
     
     # 3️⃣ OpenRouter (100+ models, one API)
@@ -66,7 +65,7 @@ class Settings(BaseSettings):
     # Unlimited requests, slower cold start
     
     # Provider order (comma-separated)
-    LLM_PROVIDER_ORDER: str = "groq,gemini,openrouter,deepseek,huggingface"
+    LLM_PROVIDER_ORDER: str = "gemini,groq,openrouter,deepseek,huggingface"
 
     # ── Rate Limiting & Caching ───────────────────────────
     ENABLE_RESPONSE_CACHE: bool = True
@@ -79,6 +78,11 @@ class Settings(BaseSettings):
 
     MAX_HISTORY_PAIRS: int = 6
     CONVERSATION_EXPIRY_HOURS: int = 24
+    
+    # ✅ ADD THESE NEW SETTINGS:
+    # Portal users get more context (they return multiple times)
+    PORTAL_MAX_HISTORY_PAIRS: int = 8
+    PORTAL_CONVERSATION_EXPIRY_HOURS: int = 72  # 3 days
 
     CONV_STORAGE: str = "sqlite"
     TURSO_DATABASE_URL: str = ""

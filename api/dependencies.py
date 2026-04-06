@@ -354,7 +354,19 @@ class SQLiteConversationStore(BaseConversationStore):
                 },
             ])
 
-            max_msgs = settings.MAX_HISTORY_PAIRS * 2
+            # Get mode from conversation
+            mode_row = conn.execute(
+                "SELECT mode FROM conversations WHERE id = ?",
+                (conv_id,)
+            ).fetchone()
+            mode = mode_row[0] if mode_row else "public"
+            
+            if mode in ("portal", "superadmin"):
+                max_pairs = settings.PORTAL_MAX_HISTORY_PAIRS  # 8 pairs
+            else:
+                max_pairs = settings.MAX_HISTORY_PAIRS  # 6 pairs
+
+            max_msgs = max_pairs * 2
             if len(messages) > max_msgs:
                 messages = messages[-max_msgs:]
 
@@ -632,8 +644,14 @@ class TursoConversationStore(BaseConversationStore):
         ai_msg: str,
         context_update: Optional[Dict] = None,
     ):
+        """
+        Add messages to conversation with mode-aware history limits
+        
+        ✅ FIXED: Uses Turso HTTP API (not conn.execute)
+        """
+        # ✅ STEP 1: Fetch existing data INCLUDING mode
         result = self._execute(
-            "SELECT messages, context FROM conversations WHERE id = ?",
+            "SELECT messages, context, mode FROM conversations WHERE id = ?",
             [conv_id]
         )
         rows = self._rows(result)
@@ -644,7 +662,9 @@ class TursoConversationStore(BaseConversationStore):
 
         messages = json.loads(rows[0]["messages"] or "[]")
         context = json.loads(rows[0]["context"] or "{}")
+        mode = rows[0].get("mode") or "public"  # ✅ Get mode from result
 
+        # ✅ STEP 2: Add new messages
         messages.extend([
             {
                 "role": "user",
@@ -658,13 +678,21 @@ class TursoConversationStore(BaseConversationStore):
             },
         ])
 
-        max_msgs = settings.MAX_HISTORY_PAIRS * 2
+        # ✅ STEP 3: Dynamic max based on mode
+        if mode in ("portal", "superadmin"):
+            max_pairs = settings.PORTAL_MAX_HISTORY_PAIRS  # 8 pairs
+        else:
+            max_pairs = settings.MAX_HISTORY_PAIRS  # 6 pairs
+
+        max_msgs = max_pairs * 2
         if len(messages) > max_msgs:
             messages = messages[-max_msgs:]
 
+        # ✅ STEP 4: Update context if needed
         if context_update:
             context.update(context_update)
 
+        # ✅ STEP 5: Save back to Turso
         self._execute(
             """UPDATE conversations
                SET messages = ?, context = ?, last_active = ?
@@ -715,18 +743,39 @@ class TursoConversationStore(BaseConversationStore):
         }
 
     def _cleanup_old(self):
-        cutoff = (
+        """
+        Delete old conversations based on mode
+        
+        ✅ Portal: 72 hours
+        ✅ Public: 24 hours
+        """
+        # Portal cleanup (72 hours)
+        portal_cutoff = (
+            datetime.now()
+            - timedelta(hours=settings.PORTAL_CONVERSATION_EXPIRY_HOURS)
+        ).isoformat()
+        
+        try:
+            self._execute(
+                "DELETE FROM conversations WHERE mode IN ('portal', 'superadmin') AND last_active < ?",
+                [portal_cutoff]
+            )
+        except Exception as e:
+            print(f"⚠️  Turso portal cleanup error: {e}")
+        
+        # Public cleanup (24 hours)
+        public_cutoff = (
             datetime.now()
             - timedelta(hours=settings.CONVERSATION_EXPIRY_HOURS)
         ).isoformat()
-
+        
         try:
             self._execute(
-                "DELETE FROM conversations WHERE last_active < ?",
-                [cutoff]
+                "DELETE FROM conversations WHERE mode = 'public' AND last_active < ?",
+                [public_cutoff]
             )
         except Exception as e:
-            print(f"⚠️  Turso cleanup error: {e}")
+            print(f"⚠️  Turso public cleanup error: {e}")
 
 
 # ════════════════════════════════════════════════
@@ -787,7 +836,7 @@ def get_conv_store() -> BaseConversationStore:
 
 class GeminiClient:
 
-    BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+    BASE_URL = "https://generativelanguage.googleapis.com/v1"
 
     def __init__(self):
         self.api_key = settings.GEMINI_API_KEY

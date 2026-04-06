@@ -453,8 +453,29 @@ def format_tool_response_locally(tool: str, data: Dict) -> str:
     if not data:
         return "⚠️  No data received from tool."
     
-    # Default JSON dump for new/unknown tools
-    return f"✅ Data fetched.\n\n```json\n{json.dumps(data, indent=2, ensure_ascii=False)}\n```"
+        # ✅ FIXED: No JSON dumps - human-readable fallback
+    if not data:
+        return "⚠️  No data available at the moment. Please try again."
+    
+    # Try generic formatting for simple data
+    try:
+        if isinstance(data, dict) and len(data) < 10:
+            lines = ["📋 **Data:**\n"]
+            for key, value in data.items():
+                key_formatted = key.replace('_', ' ').title()
+                lines.append(f"• **{key_formatted}:** {value}")
+            return "\n".join(lines)
+        
+        # Complex data - friendly message
+        return (
+            "✅ **Data received!**\n\n"
+            "The information has been fetched. "
+            "Check the relevant portal section for detailed view.\n\n"
+            "_If this was unexpected, contact support@skolify.in_"
+        )
+        
+    except Exception:
+        return "⚠️  Unable to format data. Please check the portal section directly."
 
 
 # ════════════════════════════════════════════════
