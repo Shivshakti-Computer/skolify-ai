@@ -172,7 +172,10 @@ class CommandExecutor:
 
             print(f"📡 Preview GET: /api/students/promote{query_params}")
 
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(
+                timeout=10.0,
+                follow_redirects=True, 
+                ) as client:
                 response = await client.get(
                     f"{NEXTJS_BASE}/api/students/promote{query_params}",
                     headers={
@@ -293,7 +296,7 @@ class CommandExecutor:
                 if section:
                     query += f"&section={section}"
 
-                async with httpx.AsyncClient(timeout=15.0) as client:
+                async with httpx.AsyncClient(timeout=15.0, ollow_redirects=True) as client:
                     res = await client.get(
                         f"{NEXTJS_BASE}/api/students/promote{query}",
                         headers={
@@ -348,7 +351,7 @@ class CommandExecutor:
             print(f"  filterByYear:   {payload.get('filterByYear','not set')}")
             print(f"{'='*50}\n")
 
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=60.0, ollow_redirects=True) as client:
                 promote_res = await client.post(
                     f"{NEXTJS_BASE}/api/students/promote",
                     json=payload,
@@ -407,7 +410,7 @@ class CommandExecutor:
         try:
             date = params.get('date', datetime.now().strftime('%Y-%m-%d'))
 
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, ollow_redirects=True) as client:
                 response = await client.post(
                     f"{NEXTJS_BASE}/api/chat/tools/admin",
                     json={
@@ -449,7 +452,7 @@ class CommandExecutor:
         try:
             date = params.get('date', datetime.now().strftime('%Y-%m-%d'))
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, ollow_redirects=True) as client:
                 response = await client.post(
                     f"{NEXTJS_BASE}/api/ai/admin-commands",
                     json={
@@ -491,7 +494,7 @@ class CommandExecutor:
     ) -> Dict:
         """Preview fee reminder"""
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, ollow_redirects=True) as client:
                 response = await client.post(
                     f"{NEXTJS_BASE}/api/chat/tools/admin",
                     json={
@@ -534,7 +537,7 @@ class CommandExecutor:
         try:
             channel = params.get('channel', 'sms')
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, ollow_redirects=True) as client:
                 response = await client.post(
                     f"{NEXTJS_BASE}/api/ai/admin-commands",
                     json={
@@ -584,7 +587,7 @@ class CommandExecutor:
             if section:
                 query += f"&section={section}"
 
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, ollow_redirects=True) as client:
                 response = await client.get(
                     f"{NEXTJS_BASE}/api/attendance{query}",
                     headers={
@@ -627,7 +630,7 @@ class CommandExecutor:
             if section:
                 query += f"&section={section}"
 
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=15.0, ollow_redirects=True) as client:
                 students_res = await client.get(
                     f"{NEXTJS_BASE}/api/attendance{query}",
                     headers={
@@ -724,7 +727,7 @@ class CommandExecutor:
             elif cls:
                 recipients = 'class'
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, ollow_redirects=True) as client:
                 response = await client.post(
                     f"{NEXTJS_BASE}/api/communication",
                     json={
@@ -795,7 +798,7 @@ class CommandExecutor:
             if not content:
                 return {'success': False, 'error': 'Notice content required'}
 
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=15.0, ollow_redirects=True) as client:
                 response = await client.post(
                     f"{NEXTJS_BASE}/api/ai/admin-commands",
                     json={

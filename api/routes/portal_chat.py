@@ -476,7 +476,8 @@ async def call_tool(
     tenant_id: str,
 ) -> Optional[Dict]:
     """
-    ✅ ENHANCED: Send tenant_id to Next.js for internal AI calls
+    ✅ FIXED: follow_redirects=True added
+    307 redirect was causing all tool calls to fail on production
     """
     endpoint = TOOL_ENDPOINTS.get(role)
     if not endpoint:
@@ -484,8 +485,8 @@ async def call_tool(
         return None
 
     request_body = {
-        'tool': tool,
-        'params': params,
+        'tool':      tool,
+        'params':    params,
         'tenant_id': tenant_id,
     }
 
@@ -493,7 +494,7 @@ async def call_tool(
         'Content-Type':  'application/json',
         'X-Internal-AI': 'true',
     }
-    
+
     if session_cookie:
         headers['Cookie'] = session_cookie
 
@@ -507,19 +508,24 @@ async def call_tool(
     print(f"{'='*60}\n")
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        # ✅ FIX: follow_redirects=True
+        async with httpx.AsyncClient(
+            timeout=15.0,
+            follow_redirects=True,   # ← THIS IS THE FIX
+        ) as client:
             response = await client.post(
                 endpoint,
                 json=request_body,
                 headers=headers,
             )
-            
+
             print(f"\n{'='*60}")
             print(f"📥 TOOL API RESPONSE")
             print(f"{'='*60}")
             print(f"Status:    {response.status_code}")
+            print(f"Final URL: {response.url}")  # ✅ shows where it redirected
             print(f"{'='*60}\n")
-            
+
             if response.status_code == 200:
                 try:
                     data = response.json()
@@ -531,33 +537,33 @@ async def call_tool(
                         return None
                 except Exception as e:
                     print(f"❌ JSON decode error: {e}")
+                    print(f"   Response text: {response.text[:200]}")
                     return None
-                    
+
             elif response.status_code == 401:
-                print(f"🔐 401 Unauthorized - Check X-Internal-AI header")
+                print(f"🔐 401 Unauthorized")
                 print(f"   Response: {response.text[:200]}")
                 return None
-                
+
             elif response.status_code == 403:
-                print(f"🚫 403 Forbidden - Auth bypassed nahi hua")
+                print(f"🚫 403 Forbidden")
                 print(f"   Response: {response.text[:200]}")
                 return None
-                
+
             else:
                 print(f"⚠️  HTTP {response.status_code}")
                 print(f"   Response: {response.text[:200]}")
                 return None
 
     except httpx.ConnectError as e:
-        print(f"🔌 Connection Error to Next.js:")
-        print(f"   {endpoint}")
-        print(f"   Is Next.js running? Error: {e}")
+        print(f"🔌 Connection Error: {endpoint}")
+        print(f"   Error: {e}")
         return None
-        
+
     except httpx.TimeoutException:
         print(f"⏰ Timeout after 15s")
         return None
-        
+
     except Exception as e:
         print(f"❌ Unexpected error: {type(e).__name__}: {e}")
         return None
