@@ -83,17 +83,22 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
     
     if role in ['admin', 'staff']:
         
-        # ── School Stats (Overview) ───────────────────────
+        # ── School Stats ──────────────────────────────────
         school_stats_patterns = [
             'stats', 'statistics', 'overview', 'summary',
             'school mein kitne', 'total students', 'total teachers',
             'kitne students hain', 'school overview',
             'school data', 'overall stats',
             'kitne students', 'students hain',
+            # ✅ NEW
+            'school ki jankari',
+            'school info',
+            'school details',
+            'mera school',
+            'my school',
         ]
         
         if any(pattern in msg for pattern in school_stats_patterns):
-            # But NOT if asking specifically about attendance/fees
             if not any(x in msg for x in ['absent', 'present', 'attendance', 'fee', 'fees']):
                 return {'tool': 'get_school_stats', 'params': {}}
 
@@ -123,7 +128,6 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
             'present students kitne',
             'aaj kitne students',
             'today kitne students',
-            # Absent-specific queries
             'aaj kitne absent',
             'kitne absent hain',
             'absent students today',
@@ -133,6 +137,11 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
             'absent count',
             'today absent count',
             'aaj absent kitne hain',
+            # ✅ NEW
+            'aaj ka status',
+            'today status',
+            'attendance batao',
+            'attendance dikhao',
         ]
         
         if any(pattern in msg for pattern in attendance_today_patterns):
@@ -153,7 +162,6 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
             'fee summary', 'fees collected', 'pending fees total',
             'fee status', 'collection kitni', 'fees ka status',
             'total fees', 'fees overview',
-            # New patterns
             'total pending fee',
             'pending fee total',
             'kitni fee pending',
@@ -162,6 +170,35 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
             'total fee pending',
             'how much fee pending',
             'fee baaki kitni',
+            # ✅ NEW - Expanded variations
+            'total fee batao',
+            'total collected fee',
+            'total due amount',
+            'collected fee',
+            'fee batao',
+            'kitni fee hai',
+            'fee kitni hai',
+            'due amount',
+            'pending amount',
+            'total collection',
+            'collection status',
+            'fee ka total',
+            'total fee',
+            'fees total',
+            'collected total',
+            'pending total',
+            'kitna collect hua',
+            'kitna fee collect',
+            'collection kitna hua',
+            'fee collection kitni',
+            'kitna fees aayi',
+            'fees kitni aayi',
+            'collected amount',
+            'pending kitna hai',
+            'due kitna hai',
+            'fee report',
+            'fees ka report',
+            'collection report',
         ]
         
         if any(pattern in msg for pattern in fee_summary_patterns):
@@ -191,10 +228,18 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
             'my school students',
             'school student count',
             'total student count',
+            # ✅ NEW
+            'kitne students',
+            'students batao',
+            'students dikhao',
+            'class ka count',
+            'students ki sankhya',
         ]
         
+        # Only if asking specifically about students (not generic stats)
         if any(pattern in msg for pattern in student_count_patterns):
-            if 'class' in msg or 'how many' in msg:
+            # Trigger only if "class" mentioned OR "how many" OR "count"
+            if any(kw in msg for kw in ['class', 'how many', 'count', 'kitne']):
                 return {'tool': 'get_student_count', 'params': {}}
 
         # ── Staff/Teacher Count ───────────────────────────
@@ -202,13 +247,18 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
             'kitne staff', 'staff count',
             'teachers count', 'kitne teachers', 'total staff',
             'how many teachers', 'how many staff',
-            # New patterns
             'active teacher',
             'teacher batao',
             'kitne teacher hain',
             'total teacher',
             'teacher count',
             'active teachers',
+            # ✅ NEW
+            'staff batao',
+            'staff dikhao',
+            'teachers batao',
+            'staff ki sankhya',
+            'teacher ki sankhya',
         ]
         
         if any(pattern in msg for pattern in staff_count_patterns):
