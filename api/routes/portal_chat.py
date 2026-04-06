@@ -1,16 +1,14 @@
 # api/routes/portal_chat.py
-# FIXES:
-# 1. Tool data → LOCAL format karo (NO LLM = NO data leak)
-# 2. Multi-provider LLM for general questions only
-# 3. Rate limiting handled via LLMManager
-# 4. ✅ NEW: Support for all 5 providers (2025 edition)
+# UPDATED: 2025-02-01
+# - Complete tool response formatters (all 20 tools)
+# - Multi-provider LLM fallback
+# - Privacy-first architecture (tool data never sent to LLM)
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, List, Any
+from typing import List, Optional, Dict, Any
 import uuid
 import re
-import json
 import httpx
 
 from ..dependencies import get_llm_manager, get_conv_store
@@ -91,7 +89,7 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
             'school mein kitne', 'total students', 'total teachers',
             'kitne students hain', 'school overview',
             'school data', 'overall stats',
-            'kitne students', 'students hain',  # ✅ Your working query
+            'kitne students', 'students hain',
         ]
         
         if any(pattern in msg for pattern in school_stats_patterns):
@@ -125,11 +123,11 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
             'present students kitne',
             'aaj kitne students',
             'today kitne students',
-            # ✅ NEW PATTERNS FOR YOUR QUERIES:
-            'aaj kitne absent',         # ← "aaj kitne absent hain"
+            # Absent-specific queries
+            'aaj kitne absent',
             'kitne absent hain',
             'absent students today',
-            'total absent',             # ← "total absent"
+            'total absent',
             'absent kitne',
             'how many absent',
             'absent count',
@@ -155,8 +153,8 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
             'fee summary', 'fees collected', 'pending fees total',
             'fee status', 'collection kitni', 'fees ka status',
             'total fees', 'fees overview',
-            # ✅ NEW PATTERNS:
-            'total pending fee',        # ← "total pending fee"
+            # New patterns
+            'total pending fee',
             'pending fee total',
             'kitni fee pending',
             'fee pending kitni',
@@ -195,7 +193,6 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
             'total student count',
         ]
         
-        # Only trigger if NOT asking for school stats (which is broader)
         if any(pattern in msg for pattern in student_count_patterns):
             if 'class' in msg or 'how many' in msg:
                 return {'tool': 'get_student_count', 'params': {}}
@@ -205,8 +202,8 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
             'kitne staff', 'staff count',
             'teachers count', 'kitne teachers', 'total staff',
             'how many teachers', 'how many staff',
-            # ✅ NEW PATTERNS:
-            'active teacher',           # ← "active teacher batao"
+            # New patterns
+            'active teacher',
             'teacher batao',
             'kitne teacher hain',
             'total teacher',
@@ -410,6 +407,7 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
 
     return None
 
+
 # ════════════════════════════════════════════════
 # TOOL CALLER
 # ════════════════════════════════════════════════
@@ -419,7 +417,7 @@ async def call_tool(
     tool: str,
     params: Dict,
     session_cookie: str,
-    tenant_id: str,  # ✅ ADD THIS
+    tenant_id: str,
 ) -> Optional[Dict]:
     """
     ✅ ENHANCED: Send tenant_id to Next.js for internal AI calls
@@ -429,19 +427,17 @@ async def call_tool(
         print(f"❌ No endpoint for role: {role}")
         return None
 
-    # ✅ Include tenant_id in request body
     request_body = {
         'tool': tool,
         'params': params,
-        'tenant_id': tenant_id,  # ← ADD THIS
+        'tenant_id': tenant_id,
     }
 
     headers = {
         'Content-Type':  'application/json',
-        'X-Internal-AI': 'true',  # ← Next.js identifies internal call
+        'X-Internal-AI': 'true',
     }
     
-    # Cookie optional (internal calls don't need it)
     if session_cookie:
         headers['Cookie'] = session_cookie
 
@@ -477,7 +473,7 @@ async def call_tool(
                     else:
                         print(f"⚠️  Tool error: {data.get('error')}")
                         return None
-                except json.JSONDecodeError as e:
+                except Exception as e:
                     print(f"❌ JSON decode error: {e}")
                     return None
                     
@@ -510,8 +506,9 @@ async def call_tool(
         print(f"❌ Unexpected error: {type(e).__name__}: {e}")
         return None
 
+
 # ════════════════════════════════════════════════
-# ✅ LOCAL FORMATTER - Data never goes to LLM
+# ✅ LOCAL FORMATTER - COMPLETE REWRITE
 # ════════════════════════════════════════════════
 
 def format_tool_response_locally(tool: str, data: Dict) -> str:
@@ -522,20 +519,624 @@ def format_tool_response_locally(tool: str, data: Dict) -> str:
     - Data LLM ke through NAHI jaata
     - Zero external API calls
     - Pure Python string formatting
+    
+    Updated: 2025-02-01
+    - Added all 20 missing formatters
+    - Fixed field name mismatches
+    - Added absent student list support
     """
 
-    # ... (keep all existing formatters - they're perfect!)
-    # ... (I'll keep your existing code here - no changes needed)
-    
-    # Just adding this at the end for unknown tools:
-    if not data:
-        return "⚠️  No data received from tool."
-    
-        # ✅ FIXED: No JSON dumps - human-readable fallback
     if not data:
         return "⚠️  No data available at the moment. Please try again."
+
+    # ══════════════════════════════════════════════════════
+    # ADMIN TOOLS
+    # ══════════════════════════════════════════════════════
+
+    if tool == 'get_school_stats':
+        total_students = data.get('total_students', 0)
+        active_students = data.get('active_students', 0)
+        total_teachers = data.get('total_teachers', 0)
+        active_teachers = data.get('active_teachers', 0)
+        total_staff = data.get('total_staff', 0)
+        
+        return f"""📊 **School Overview**
+
+👨‍🎓 **Students:**
+  • Total: {total_students:,}
+  • Active: {active_students:,}
+
+👨‍🏫 **Teachers:**
+  • Total: {total_teachers}
+  • Active: {active_teachers}
+
+👔 **Other Staff:** {total_staff}
+
+📍 Check dashboard for detailed analytics."""
+
+    if tool == 'get_attendance_today':
+        present = data.get('present', 0)
+        absent = data.get('absent', 0)
+        late = data.get('late', 0)
+        percentage = data.get('percentage', 0)
+        date_display = data.get('date', 'Today')
+        absent_students = data.get('absent_students', [])
+        
+        response = f"""📅 **Today's Attendance** ({date_display})
+
+✅ **Present:** {present} students
+❌ **Absent:** {absent} students
+⏰ **Late:** {late} students
+
+📊 **Attendance Rate:** {percentage}%
+"""
+        
+        if absent_students and len(absent_students) <= 10:
+            response += "\n**📋 Absent Students:**\n"
+            for student in absent_students:
+                name = student.get('name', 'Unknown')
+                cls = student.get('class', '')
+                response += f"  • {name} ({cls})\n"
+        elif absent > 10:
+            response += f"\n_View full absent list ({absent} students) in Attendance section_"
+        
+        if percentage >= 90:
+            response += "\n\n✅ **Excellent attendance today!**"
+        elif percentage >= 75:
+            response += "\n\n👍 **Good attendance.**"
+        else:
+            response += "\n\n⚠️ **Attendance below 75% - follow up needed.**"
+        
+        return response
+
+    if tool == 'get_attendance_summary':
+        period = data.get('period', 'Last 30 days')
+        present = data.get('present', 0)
+        absent = data.get('absent', 0)
+        late = data.get('late', 0)
+        avg = data.get('average_attendance', '0%')
+        
+        return f"""📊 **Attendance Summary** ({period})
+
+✅ **Present:** {present:,} entries
+❌ **Absent:** {absent:,} entries
+⏰ **Late:** {late:,} entries
+
+📈 **Average Attendance:** {avg}
+
+_Go to Attendance → Reports for detailed analysis_"""
+
+    if tool == 'get_fee_summary':
+        collected = data.get('total_collected', 0)
+        pending = data.get('total_pending', 0)
+        this_month = data.get('collected_this_month', 0)
+        overdue = data.get('overdue_count', 0)
+        partial = data.get('partial_count', 0)
+        currency = data.get('currency', '₹')
+        
+        total = collected + pending
+        collection_rate = round((collected / total * 100)) if total > 0 else 0
+        
+        return f"""💰 **Fee Collection Summary**
+
+✅ **Total Collected:** {currency}{collected:,}
+⏳ **Total Pending:** {currency}{pending:,}
+📅 **This Month:** {currency}{this_month:,}
+
+📊 **Collection Rate:** {collection_rate}%
+
+⚠️ **Overdue Fees:** {overdue} students
+📋 **Partial Payments:** {partial} students
+
+_Go to Fees section for detailed reports_"""
+
+    if tool == 'get_pending_fees':
+        count = data.get('count', 0)
+        fees = data.get('fees', [])
+        
+        if count == 0:
+            return "✅ **Great news!**\n\nNo pending fees at the moment. All students are up to date!"
+        
+        response = f"💰 **Pending Fees** ({count} students)\n\n"
+        
+        for fee in fees[:10]:
+            student = fee.get('student', 'Unknown')
+            cls = fee.get('class', '')
+            amount = fee.get('amount', 0)
+            due = fee.get('due_date', 'N/A')
+            status = fee.get('status', 'pending')
+            
+            status_icon = '⚠️' if status == 'pending' else '📋'
+            response += f"{status_icon} **{student}** ({cls})\n"
+            response += f"    ₹{amount:,} | Due: {due}\n\n"
+        
+        if count > 10:
+            response += f"_...and {count - 10} more. View all in Fees → Pending section_"
+        
+        return response
+
+    if tool == 'get_student_count':
+        total = data.get('total_active', 0)
+        by_class = data.get('by_class', [])
+        
+        response = f"👨‍🎓 **Student Count**\n\n"
+        
+        if by_class:
+            response += "**Class-wise Breakdown:**\n"
+            for cls in by_class:
+                class_name = cls.get('class', 'Unknown')
+                count = cls.get('count', 0)
+                response += f"  • Class {class_name}: {count} students\n"
+        
+        response += f"\n**Total Active Students:** {total:,}"
+        
+        return response
+
+    if tool == 'get_staff_count':
+        total = data.get('total', 0)
+        by_category = data.get('by_category', [])
+        by_dept = data.get('by_department', [])
+        
+        response = f"👨‍🏫 **Staff Overview**\n\n"
+        response += f"**Total Active Staff:** {total}\n\n"
+        
+        if by_category:
+            response += "**By Category:**\n"
+            for cat in by_category:
+                category = cat.get('category', 'unknown').replace('_', ' ').title()
+                count = cat.get('count', 0)
+                response += f"  • {category}: {count}\n"
+        
+        if by_dept:
+            response += "\n**Top Departments:**\n"
+            for dept in by_dept[:5]:
+                dept_name = dept.get('department', 'N/A')
+                count = dept.get('count', 0)
+                response += f"  • {dept_name}: {count}\n"
+        
+        return response
+
+    if tool == 'get_recent_notices':
+        count = data.get('count', 0)
+        notices = data.get('notices', [])
+        
+        if count == 0:
+            return "📢 **No recent notices**\n\nCheck back later for updates!"
+        
+        response = f"📢 **Recent Notices** ({count})\n\n"
+        
+        for notice in notices:
+            title = notice.get('title', 'Untitled')
+            date = notice.get('date', '')
+            audience = notice.get('audience', 'All')
+            response += f"📌 **{title}**\n"
+            response += f"    {date} | {audience}\n\n"
+        
+        response += "_View all in Notices section_"
+        return response
+
+    # ══════════════════════════════════════════════════════
+    # TEACHER TOOLS
+    # ══════════════════════════════════════════════════════
+
+    if tool == 'get_my_students':
+        total = data.get('total', 0)
+        cls = data.get('class', 'All')
+        section = data.get('section', '')
+        students = data.get('students', [])
+        
+        if total == 0:
+            return "👥 **No students found**\n\nCheck your class/section assignment."
+        
+        class_display = f"{cls} {section}".strip()
+        response = f"👥 **My Students** (Class {class_display})\n\n"
+        response += f"**Total:** {total} students\n\n"
+        
+        if students and len(students) <= 20:
+            response += "**Student List:**\n"
+            for s in students[:20]:
+                name = s.get('name', 'Unknown')
+                roll = s.get('roll', '-')
+                status = s.get('status', 'active')
+                status_icon = '✅' if status == 'active' else '⚠️'
+                response += f"{status_icon} {name} (Roll: {roll})\n"
+        else:
+            response += "_View full list in Students section_"
+        
+        return response
+
+    if tool == 'get_my_class_attendance_today':
+        date_display = data.get('date', 'Today')
+        cls = data.get('class', 'Your class')
+        present = data.get('present', 0)
+        absent = data.get('absent', 0)
+        late = data.get('late', 0)
+        percentage = data.get('percentage', '0%')
+        is_marked = data.get('is_marked', False)
+        
+        if not is_marked:
+            return f"""📅 **Attendance - {cls}** ({date_display})
+
+⚠️ **Not marked yet**
+
+Total students: {data.get('total_students', 0)}
+
+_Go to Attendance → Mark Attendance_"""
+        
+        return f"""📅 **Attendance - {cls}** ({date_display})
+
+✅ Present: {present}
+❌ Absent: {absent}
+⏰ Late: {late}
+
+📊 **Attendance:** {percentage}"""
+
+    if tool == 'get_student_attendance':
+        name = data.get('student_name', 'Student')
+        cls = data.get('class', '')
+        period = data.get('period', 'Last 30 days')
+        present = data.get('present', 0)
+        absent = data.get('absent', 0)
+        late = data.get('late', 0)
+        percentage = data.get('attendance_percentage', '0%')
+        status = data.get('status', '')
+        
+        return f"""📊 **{name}'s Attendance** ({cls})
+
+**Period:** {period}
+
+✅ Present: {present} days
+❌ Absent: {absent} days
+⏰ Late: {late} days
+
+📈 **Attendance:** {percentage}
+
+**Status:** {status}"""
+
+    if tool == 'get_pending_homework':
+        count = data.get('count', 0)
+        homework = data.get('homework', [])
+        
+        if count == 0:
+            return "📚 **No pending homework**\n\nAll assignments are up to date!"
+        
+        response = f"📚 **Pending Homework** ({count} assignments)\n\n"
+        
+        for hw in homework:
+            title = hw.get('title', 'Untitled')
+            cls = hw.get('class', '')
+            subject = hw.get('subject', '')
+            due = hw.get('due', 'N/A')
+            
+            response += f"📝 **{title}**\n"
+            response += f"    {subject} | {cls} | Due: {due}\n\n"
+        
+        return response
+
+    # ══════════════════════════════════════════════════════
+    # STUDENT TOOLS
+    # ══════════════════════════════════════════════════════
+
+    if tool == 'get_my_attendance':
+        period = data.get('period', 'Last 30 days')
+        present = data.get('present', 0)
+        absent = data.get('absent', 0)
+        late = data.get('late', 0)
+        percentage = data.get('attendance_percentage', '0%')
+        today_status = data.get('today_status', 'Not marked')
+        remark = data.get('remark', '')
+        
+        return f"""📊 **My Attendance** ({period})
+
+✅ Present: {present} days
+❌ Absent: {absent} days
+⏰ Late: {late} days
+
+📈 **Attendance:** {percentage}
+
+**Today:** {today_status}
+
+{remark}"""
+
+    if tool == 'get_my_fees':
+        pending_count = data.get('pending_count', 0)
+        total_pending = data.get('total_pending', '₹0')
+        pending_fees = data.get('pending_fees', [])
+        recent_paid = data.get('recent_paid', [])
+        
+        response = f"💰 **My Fees**\n\n"
+        
+        if pending_count > 0:
+            response += f"⚠️ **Pending:** {total_pending}\n\n"
+            response += "**Due Fees:**\n"
+            for fee in pending_fees:
+                amount = fee.get('amount', '₹0')
+                due = fee.get('due_date', 'N/A')
+                status = fee.get('status', 'pending')
+                response += f"  • {amount} (Due: {due}) [{status}]\n"
+        else:
+            response += "✅ **All fees paid!**\n\n"
+        
+        if recent_paid:
+            response += "\n**Recent Payments:**\n"
+            for payment in recent_paid[:3]:
+                amount = payment.get('amount', '₹0')
+                paid = payment.get('paid_on', 'N/A')
+                response += f"  • {amount} (Paid: {paid})\n"
+        
+        return response
+
+    if tool == 'get_my_notices':
+        count = data.get('count', 0)
+        notices = data.get('notices', [])
+        
+        if count == 0:
+            return "📢 **No new notices**\n\nCheck back later!"
+        
+        response = f"📢 **My Notices** ({count})\n\n"
+        
+        for notice in notices:
+            title = notice.get('title', 'Untitled')
+            preview = notice.get('preview', '')
+            date = notice.get('date', '')
+            
+            response += f"📌 **{title}**\n"
+            if preview:
+                response += f"    {preview}\n"
+            response += f"    {date}\n\n"
+        
+        return response
+
+    if tool == 'get_my_homework':
+        cls = data.get('class', 'Your class')
+        pending_count = data.get('pending_count', 0)
+        homework = data.get('homework', [])
+        
+        if pending_count == 0:
+            return f"📚 **My Homework** ({cls})\n\n✅ No pending assignments!"
+        
+        response = f"📚 **My Homework** ({cls})\n\n"
+        response += f"**Pending:** {pending_count} assignments\n\n"
+        
+        for hw in homework:
+            title = hw.get('title', 'Untitled')
+            subject = hw.get('subject', '')
+            due = hw.get('due', 'N/A')
+            
+            response += f"📝 **{title}**\n"
+            response += f"    {subject} | Due: {due}\n\n"
+        
+        return response
+
+    if tool == 'get_my_profile':
+        cls = data.get('class', 'N/A')
+        roll = data.get('roll_number', 'N/A')
+        admission = data.get('admission_number', 'N/A')
+        academic_year = data.get('academic_year', 'N/A')
+        status = data.get('status', 'active')
+        
+        return f"""👤 **My Profile**
+
+**Class:** {cls}
+**Roll Number:** {roll}
+**Admission Number:** {admission}
+**Academic Year:** {academic_year}
+**Status:** {status}
+
+_Contact admin to update details_"""
+
+    # ══════════════════════════════════════════════════════
+    # PARENT TOOLS
+    # ══════════════════════════════════════════════════════
+
+    if tool == 'get_child_attendance':
+        child_name = data.get('child_name', 'Your child')
+        cls = data.get('class', '')
+        today = data.get('today', 'Not marked')
+        period = data.get('period', 'Last 30 days')
+        present = data.get('present', 0)
+        absent = data.get('absent', 0)
+        late = data.get('late', 0)
+        percentage = data.get('percentage', '0%')
+        message = data.get('message', '')
+        
+        return f"""📊 **{child_name}'s Attendance** ({cls})
+
+**Today:** {today}
+
+**{period}:**
+✅ Present: {present} days
+❌ Absent: {absent} days
+⏰ Late: {late} days
+
+📈 **Attendance:** {percentage}
+
+{message}"""
+
+    if tool == 'get_child_fees':
+        child_name = data.get('child_name', 'Your child')
+        pending_amount = data.get('pending_amount', '₹0')
+        pending_count = data.get('pending_count', 0)
+        pending_fees = data.get('pending_fees', [])
+        recent_payments = data.get('recent_payments', [])
+        action = data.get('action', '')
+        
+        response = f"💰 **{child_name}'s Fees**\n\n"
+        
+        if pending_count > 0:
+            response += f"⚠️ **Pending:** {pending_amount}\n\n"
+            response += "**Due Payments:**\n"
+            for fee in pending_fees:
+                amount = fee.get('amount', '₹0')
+                due = fee.get('due', 'N/A')
+                status = fee.get('status', 'pending')
+                response += f"  • {amount} (Due: {due}) [{status}]\n"
+            response += f"\n{action}"
+        else:
+            response += "✅ All fees paid!\n\n"
+        
+        if recent_payments:
+            response += "\n**Recent Payments:**\n"
+            for payment in recent_payments:
+                amount = payment.get('amount', '₹0')
+                paid = payment.get('paid', 'N/A')
+                response += f"  • {amount} (Paid: {paid})\n"
+        
+        return response
+
+    if tool == 'get_child_notices':
+        count = data.get('count', 0)
+        notices = data.get('notices', [])
+        
+        if count == 0:
+            return "📢 **No new notices**\n\nCheck back later for updates!"
+        
+        response = f"📢 **School Notices** ({count})\n\n"
+        
+        for notice in notices:
+            title = notice.get('title', 'Untitled')
+            preview = notice.get('preview', '')
+            date = notice.get('date', '')
+            
+            response += f"📌 **{title}**\n"
+            if preview:
+                response += f"    {preview}\n"
+            response += f"    {date}\n\n"
+        
+        return response
+
+    if tool == 'get_child_profile':
+        name = data.get('name', 'Student')
+        cls = data.get('class', 'N/A')
+        roll = data.get('roll_number', 'N/A')
+        admission = data.get('admission_number', 'N/A')
+        academic_year = data.get('academic_year', 'N/A')
+        
+        return f"""👤 **Child Profile**
+
+**Name:** {name}
+**Class:** {cls}
+**Roll Number:** {roll}
+**Admission Number:** {admission}
+**Academic Year:** {academic_year}
+
+_Contact school for any updates_"""
+
+    # ══════════════════════════════════════════════════════
+    # SUPERADMIN TOOLS
+    # ══════════════════════════════════════════════════════
+
+    if tool == 'get_platform_stats':
+        total_schools = data.get('total_schools', 0)
+        active_schools = data.get('active_schools', 0)
+        trial_schools = data.get('trial_schools', 0)
+        expired_schools = data.get('expired_schools', 0)
+        total_users = data.get('total_users', 0)
+        health = data.get('health', '🟢 Good')
+        
+        return f"""📊 **Platform Overview**
+
+🏫 **Schools:**
+  • Total: {total_schools}
+  • Active: {active_schools}
+  • Trial: {trial_schools}
+  • Expired: {expired_schools}
+
+👥 **Total Users:** {total_users:,}
+
+**Platform Health:** {health}"""
+
+    if tool == 'get_schools_list':
+        total = data.get('total', 0)
+        schools = data.get('schools', [])
+        
+        response = f"🏫 **Schools List** (Latest {total})\n\n"
+        
+        for school in schools:
+            name = school.get('name', 'Unknown')
+            status = school.get('status', 'unknown')
+            plan = school.get('plan', 'starter')
+            city = school.get('city', 'N/A')
+            joined = school.get('joined', '')
+            
+            status_icon = '✅' if status == 'active' else '⚠️' if status == 'trial' else '❌'
+            response += f"{status_icon} **{name}**\n"
+            response += f"    {plan.title()} | {city} | Joined: {joined}\n\n"
+        
+        return response
+
+    if tool == 'get_revenue_summary':
+        this_month = data.get('this_month', '₹0')
+        last_month = data.get('last_month', '₹0')
+        growth = data.get('growth', '0%')
+        active_subs = data.get('active_subscriptions', 0)
+        trend = data.get('trend', '➡️ Stable')
+        
+        return f"""💰 **Revenue Summary**
+
+**This Month:** {this_month}
+**Last Month:** {last_month}
+**Growth:** {growth}
+
+**Active Subscriptions:** {active_subs}
+
+**Trend:** {trend}"""
+
+    if tool == 'get_subscription_breakdown':
+        breakdown = data.get('breakdown', [])
+        
+        response = "📊 **Subscription Breakdown**\n\n"
+        
+        for item in breakdown:
+            plan = item.get('plan', 'unknown').title()
+            status = item.get('status', 'unknown')
+            count = item.get('count', 0)
+            
+            response += f"  • {plan} ({status}): {count} schools\n"
+        
+        return response
+
+    if tool == 'get_expiring_trials':
+        count = data.get('count', 0)
+        schools = data.get('schools', [])
+        
+        if count == 0:
+            return "✅ **No trials expiring soon**\n\nAll good for next 7 days!"
+        
+        response = f"⏰ **Expiring Trials** ({count} schools)\n\n"
+        
+        for school in schools:
+            name = school.get('name', 'Unknown')
+            expires = school.get('expires', 'N/A')
+            days_left = school.get('days_left', 0)
+            
+            urgency = '🔴' if days_left <= 2 else '🟡' if days_left <= 5 else '🟢'
+            response += f"{urgency} **{name}**\n"
+            response += f"    Expires: {expires} ({days_left} days left)\n\n"
+        
+        return response
+
+    if tool == 'get_recent_registrations':
+        count = data.get('count', 0)
+        schools = data.get('schools', [])
+        
+        response = f"🆕 **Recent Registrations** ({count})\n\n"
+        
+        for school in schools:
+            name = school.get('name', 'Unknown')
+            plan = school.get('plan', 'starter')
+            city = school.get('city', 'N/A')
+            joined = school.get('joined', '')
+            
+            response += f"🏫 **{name}**\n"
+            response += f"    {plan.title()} | {city} | {joined}\n\n"
+        
+        return response
+
+    # ══════════════════════════════════════════════════════
+    # FALLBACK
+    # ══════════════════════════════════════════════════════
     
-    # Try generic formatting for simple data
     try:
         if isinstance(data, dict) and len(data) < 10:
             lines = ["📋 **Data:**\n"]
@@ -544,7 +1145,6 @@ def format_tool_response_locally(tool: str, data: Dict) -> str:
                 lines.append(f"• **{key_formatted}:** {value}")
             return "\n".join(lines)
         
-        # Complex data - friendly message
         return (
             "✅ **Data received!**\n\n"
             "The information has been fetched. "
@@ -603,13 +1203,9 @@ def get_superadmin_quick_replies() -> List[Dict]:
 
 
 def get_portal_fallback(role: str, message: str) -> str:
-    """
-    Smart fallback when all LLMs fail
-    Guide users to correct portal section
-    """
+    """Smart fallback when all LLMs fail"""
     msg = message.lower()
     
-    # Navigation hints based on keywords
     nav_map = {
         "attendance": {
             "admin":   "**Attendance** section → Reports milenge",
@@ -641,7 +1237,6 @@ def get_portal_fallback(role: str, message: str) -> str:
             hint = role_map.get(role, "Portal section mein check karo.")
             return f"💡 **Quick Tip:**\n\n{hint}"
     
-    # Generic fallback
     return (
         "Abhi connect nahi ho pa raha. 😅\n\n"
         "Portal section mein directly check karo ya "
@@ -691,22 +1286,19 @@ async def portal_chat(request: PortalChatRequest):
 
         # ── Tool Intent Detection ──────────────────────────
         tool_intent   = detect_tool_intent(message, role)
+        tool_data     = None
+        tool_used     = False
+        provider_used = "none"
 
-        # ✅ ADD THIS DEBUG:
         if tool_intent:
             print(f"✅ Tool detected: {tool_intent['tool']}")
         else:
             print(f"⚠️  No tool detected for: '{message}'")
             print(f"   Role: {role}")
         
-        # ✅ ADD THIS DEBUG:
         if tool_intent and not request.session_cookie:
             print(f"❌ CRITICAL: Tool detected but NO SESSION COOKIE!")
             print(f"   Tool will NOT be called - frontend must send session_cookie")
-
-        tool_data     = None
-        tool_used     = False
-        provider_used = "none"
 
         if tool_intent and request.session_cookie:
             print(f"🔧 Tool: {tool_intent['tool']}")
@@ -715,7 +1307,7 @@ async def portal_chat(request: PortalChatRequest):
                 tool=tool_intent['tool'],
                 params=tool_intent.get('params', {}),
                 session_cookie=request.session_cookie,
-                tenant_id=request.tenant_id,  # ✅ ADD THIS
+                tenant_id=request.tenant_id,
             )
         
         if tool_data:
@@ -725,7 +1317,6 @@ async def portal_chat(request: PortalChatRequest):
 
         # ══════════════════════════════════════════════════
         # ✅ PRIVACY: Tool data → LOCAL format (NO LLM)
-        # School data kisi bhi third party ko nahi jaata
         # ══════════════════════════════════════════════════
         if tool_data:
             tool_used     = True
@@ -741,7 +1332,6 @@ async def portal_chat(request: PortalChatRequest):
                 school_name=school,
                 user_role=role,
                 user_name=request.user_name or "User",
-                # ✅ PRIVACY: Real data NEVER in prompt
                 school_context="Guide user to correct portal section.",
             )
             system_prompt += ROLE_PROMPTS.get(role, "")
@@ -751,8 +1341,6 @@ async def portal_chat(request: PortalChatRequest):
                 {"role": "user", "content": message}
             ]
 
-            # ✅ RATE LIMIT FIX: Multi-provider (2025)
-            # groq → gemini → openrouter → deepseek → huggingface
             llm                        = get_llm_manager()
             ai_response, provider_used = await llm.chat(
                 system_prompt=system_prompt,
@@ -761,9 +1349,7 @@ async def portal_chat(request: PortalChatRequest):
                 max_tokens=400,
             )
 
-            # ✅ FIXED: Proper indentation
             if not ai_response:
-                # Check if it was a data request
                 is_data_request = any(w in message.lower() for w in [
                     'how many', 'kitne', 'stats', 'count',
                     'present', 'absent', 'fees', 'attendance'
@@ -816,7 +1402,6 @@ async def portal_chat(request: PortalChatRequest):
                 "role":               role,
                 "tool_used":          tool_used,
                 "tool_name":          tool_intent['tool'] if tool_intent else None,
-                # ✅ Privacy audit trail
                 "data_sent_to_llm":   False,
                 "data_privacy":       "guaranteed",
             },
@@ -838,17 +1423,14 @@ async def portal_chat(request: PortalChatRequest):
             metadata={"error": str(e)},
         )
 
+
 # ════════════════════════════════════════════════
 # SUPERADMIN CHAT ENDPOINT
 # ════════════════════════════════════════════════
 
 @router.post("/superadmin-chat", response_model=PortalChatResponse)
 async def superadmin_chat(request: SuperadminChatRequest):
-    """
-    Superadmin console assistant
-    
-    ✅ PRIVACY: Platform data also formatted locally
-    """
+    """Superadmin console assistant"""
     try:
         conv_id = request.conversation_id or str(uuid.uuid4())
         message = request.message.strip()
@@ -864,7 +1446,6 @@ async def superadmin_chat(request: SuperadminChatRequest):
             user_id=request.superadmin_id,
         )
 
-        # ── Tool Detection ─────────────────────────────────
         tool_intent   = detect_tool_intent(message, 'superadmin')
         tool_data     = None
         tool_used     = False
@@ -877,9 +1458,9 @@ async def superadmin_chat(request: SuperadminChatRequest):
                 tool=tool_intent['tool'],
                 params=tool_intent.get('params', {}),
                 session_cookie=request.session_cookie,
+                tenant_id='',  # Superadmin has no tenant
             )
 
-        # ✅ Superadmin data bhi locally format karo
         if tool_data:
             tool_used     = True
             provider_used = "local_formatter"
@@ -889,13 +1470,11 @@ async def superadmin_chat(request: SuperadminChatRequest):
             print("✅ SA data formatted locally 🔒")
 
         else:
-            # General superadmin question → LLM (no data)
             history          = store.get_llm_messages(conv_id)
             messages_for_llm = history + [
                 {"role": "user", "content": message}
             ]
 
-            # ✅ RATE LIMIT FIX: Multi-provider (2025)
             llm                        = get_llm_manager()
             ai_response, provider_used = await llm.chat(
                 system_prompt=SUPERADMIN_SYSTEM_PROMPT,
@@ -955,7 +1534,7 @@ async def superadmin_chat(request: SuperadminChatRequest):
 
 
 # ════════════════════════════════════════════════
-# ✅ UPDATED HELPER - Support all 5 providers
+# HELPER
 # ════════════════════════════════════════════════
 
 def _get_model_name(provider: str) -> str:
