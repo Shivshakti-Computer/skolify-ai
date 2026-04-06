@@ -74,31 +74,32 @@ class PortalChatResponse(BaseModel):
 
 def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
     """
-    ✅ FIXED: More flexible pattern matching
-    Handles variations like:
-    - "how many students present"
-    - "kitne students aaye"
-    - "attendance today"
-    - "present students"
+    ✅ COMPREHENSIVE: Detects tool intent from natural language queries
+    Supports Hindi, Hinglish, and English
     """
     msg = message.lower().strip()
 
     # ══════════════════════════════════════════════════════
-    # ✅ ADMIN/STAFF TOOLS (Enhanced Patterns)
+    # ADMIN/STAFF TOOLS
     # ══════════════════════════════════════════════════════
     
     if role in ['admin', 'staff']:
         
-        # ── School Stats ──────────────────────────────────
-        if any(w in msg for w in [
+        # ── School Stats (Overview) ───────────────────────
+        school_stats_patterns = [
             'stats', 'statistics', 'overview', 'summary',
             'school mein kitne', 'total students', 'total teachers',
             'kitne students hain', 'school overview',
-            'school data', 'overall stats'
-        ]):
-            return {'tool': 'get_school_stats', 'params': {}}
+            'school data', 'overall stats',
+            'kitne students', 'students hain',  # ✅ Your working query
+        ]
+        
+        if any(pattern in msg for pattern in school_stats_patterns):
+            # But NOT if asking specifically about attendance/fees
+            if not any(x in msg for x in ['absent', 'present', 'attendance', 'fee', 'fees']):
+                return {'tool': 'get_school_stats', 'params': {}}
 
-        # ── Today's Attendance (✅ ENHANCED) ──────────────
+        # ── Today's Attendance ────────────────────────────
         attendance_today_patterns = [
             'aaj ki attendance',
             'today attendance',
@@ -108,7 +109,6 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
             'attendance today',
             'aaj ka attendance',
             'kitne absent aaj',
-            # ✅ NEW PATTERNS:
             'how many students present',
             'how many present today',
             'kitne students present',
@@ -120,6 +120,21 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
             'attendance status today',
             'today present',
             'present count',
+            'kitne student present',
+            'student present hain',
+            'present students kitne',
+            'aaj kitne students',
+            'today kitne students',
+            # ✅ NEW PATTERNS FOR YOUR QUERIES:
+            'aaj kitne absent',         # ← "aaj kitne absent hain"
+            'kitne absent hain',
+            'absent students today',
+            'total absent',             # ← "total absent"
+            'absent kitne',
+            'how many absent',
+            'absent count',
+            'today absent count',
+            'aaj absent kitne hain',
         ]
         
         if any(pattern in msg for pattern in attendance_today_patterns):
@@ -134,13 +149,24 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
         ]):
             return {'tool': 'get_attendance_summary', 'params': {}}
 
-        # ── Fee Collection ────────────────────────────────
-        if any(w in msg for w in [
+        # ── Fee Summary ───────────────────────────────────
+        fee_summary_patterns = [
             'fee collection', 'kitni fees aayi',
             'fee summary', 'fees collected', 'pending fees total',
             'fee status', 'collection kitni', 'fees ka status',
-            'total fees', 'fees overview'
-        ]):
+            'total fees', 'fees overview',
+            # ✅ NEW PATTERNS:
+            'total pending fee',        # ← "total pending fee"
+            'pending fee total',
+            'kitni fee pending',
+            'fee pending kitni',
+            'pending fees kitne',
+            'total fee pending',
+            'how much fee pending',
+            'fee baaki kitni',
+        ]
+        
+        if any(pattern in msg for pattern in fee_summary_patterns):
             return {'tool': 'get_fee_summary', 'params': {}}
 
         # ── Pending Fees List ─────────────────────────────
@@ -151,29 +177,44 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
         ]):
             return {'tool': 'get_pending_fees', 'params': {}}
 
-        # ── Student Count (✅ ENHANCED) ───────────────────
+        # ── Student Count ─────────────────────────────────
         student_count_patterns = [
-            'kitne students',
             'student count',
             'students kitne hain',
             'class wise students',
             'students by class',
-            # ✅ NEW:
             'how many students',
             'total students',
             'number of students',
             'students hain kitne',
+            'students in my school',
+            'students hai school mein',
+            'school mein kitne students',
+            'my school students',
+            'school student count',
+            'total student count',
         ]
         
+        # Only trigger if NOT asking for school stats (which is broader)
         if any(pattern in msg for pattern in student_count_patterns):
-            return {'tool': 'get_student_count', 'params': {}}
+            if 'class' in msg or 'how many' in msg:
+                return {'tool': 'get_student_count', 'params': {}}
 
-        # ── Staff Count ───────────────────────────────────
-        if any(w in msg for w in [
+        # ── Staff/Teacher Count ───────────────────────────
+        staff_count_patterns = [
             'kitne staff', 'staff count',
             'teachers count', 'kitne teachers', 'total staff',
-            'how many teachers', 'how many staff'
-        ]):
+            'how many teachers', 'how many staff',
+            # ✅ NEW PATTERNS:
+            'active teacher',           # ← "active teacher batao"
+            'teacher batao',
+            'kitne teacher hain',
+            'total teacher',
+            'teacher count',
+            'active teachers',
+        ]
+        
+        if any(pattern in msg for pattern in staff_count_patterns):
             return {'tool': 'get_staff_count', 'params': {}}
 
         # ── Recent Notices ────────────────────────────────
@@ -196,31 +237,31 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
             'class list', 'students list', 'roll list',
             'my class students'
         ]):
-            # Extract class if mentioned
             class_match = re.search(r'\bclass\s*(\d+|[a-zA-Z]+)\b', msg, re.IGNORECASE)
             params = {}
             if class_match:
                 params['class'] = class_match.group(1)
             return {'tool': 'get_my_students', 'params': params}
 
-        # ── Class Attendance Today (✅ ENHANCED) ──────────
+        # ── Class Attendance Today ────────────────────────
         class_attendance_patterns = [
             'aaj attendance',
             'today attendance',
             'class attendance',
             'meri class mein aaj',
             'kitne present aaj',
-            # ✅ NEW:
             'my class attendance',
             'class attendance today',
             'how many present in my class',
             'kitne bacche aaye',
+            'aaj kitne absent',
+            'kitne absent hain',
         ]
         
         if any(pattern in msg for pattern in class_attendance_patterns):
             return {'tool': 'get_my_class_attendance_today', 'params': {}}
 
-        # ── Student Attendance (specific student) ─────────
+        # ── Student Attendance (specific) ─────────────────
         for pattern in [
             r'(\w+)\s+(?:ki|ka)\s+attendance',
             r'attendance\s+of\s+(\w+)',
@@ -248,7 +289,6 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
     
     elif role == 'student':
         
-        # ── My Attendance ─────────────────────────────────
         if any(w in msg for w in [
             'meri attendance', 'my attendance',
             'attendance kitni', 'attendance check', 'kitne din present',
@@ -257,7 +297,6 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
         ]):
             return {'tool': 'get_my_attendance', 'params': {}}
 
-        # ── My Fees ───────────────────────────────────────
         if any(w in msg for w in [
             'meri fees', 'my fees', 'fees kitni hai',
             'fee status', 'pending fee', 'kitna pay karna hai',
@@ -266,7 +305,6 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
         ]):
             return {'tool': 'get_my_fees', 'params': {}}
 
-        # ── Notices ───────────────────────────────────────
         if any(w in msg for w in [
             'notices', 'notice', 'announcement',
             'school ne kya bataya', 'koi notice',
@@ -274,7 +312,6 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
         ]):
             return {'tool': 'get_my_notices', 'params': {}}
 
-        # ── Homework ──────────────────────────────────────
         if any(w in msg for w in [
             'homework', 'assignment',
             'pending homework', 'aaj ka homework',
@@ -282,7 +319,6 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
         ]):
             return {'tool': 'get_my_homework', 'params': {}}
 
-        # ── Profile ───────────────────────────────────────
         if any(w in msg for w in [
             'mera profile', 'my profile',
             'mera roll number', 'admission number',
@@ -296,7 +332,6 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
     
     elif role == 'parent':
         
-        # ── Child Attendance ──────────────────────────────
         if any(w in msg for w in [
             'beta aaya', 'child attendance',
             'bacche ki attendance', 'aaj school aaya', 'baccha aaya',
@@ -305,7 +340,6 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
         ]):
             return {'tool': 'get_child_attendance', 'params': {}}
 
-        # ── Child Fees ────────────────────────────────────
         if any(w in msg for w in [
             'fees kitni', 'fee status', 'fee pending',
             'kitna pay karna', 'fee due', 'fee baaki', 'fee pay',
@@ -313,7 +347,6 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
         ]):
             return {'tool': 'get_child_fees', 'params': {}}
 
-        # ── Notices ───────────────────────────────────────
         if any(w in msg for w in [
             'notice', 'announcement',
             'school ne kya kaha', 'school notice',
@@ -321,7 +354,6 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
         ]):
             return {'tool': 'get_child_notices', 'params': {}}
 
-        # ── Child Profile ─────────────────────────────────
         if any(w in msg for w in [
             'bacche ka profile', 'child profile',
             'roll number', 'admission number',
@@ -335,7 +367,6 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
     
     elif role == 'superadmin':
         
-        # ── Platform Stats ────────────────────────────────
         if any(w in msg for w in [
             'platform stats', 'overview', 'total schools',
             'kitne schools', 'platform overview', 'sab schools',
@@ -343,7 +374,6 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
         ]):
             return {'tool': 'get_platform_stats', 'params': {}}
 
-        # ── Schools List ──────────────────────────────────
         if any(w in msg for w in [
             'schools list', 'all schools',
             'schools dikhao', 'registered schools',
@@ -351,7 +381,6 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
         ]):
             return {'tool': 'get_schools_list', 'params': {}}
 
-        # ── Revenue ───────────────────────────────────────
         if any(w in msg for w in [
             'revenue', 'income', 'earnings',
             'kitna revenue', 'monthly revenue', 'revenue kya hai',
@@ -359,14 +388,12 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
         ]):
             return {'tool': 'get_revenue_summary', 'params': {}}
 
-        # ── Subscriptions ─────────────────────────────────
         if any(w in msg for w in [
             'subscription', 'plans', 'plan breakdown',
             'plan distribution', 'subscription breakdown'
         ]):
             return {'tool': 'get_subscription_breakdown', 'params': {}}
 
-        # ── Expiring Trials ───────────────────────────────
         if any(w in msg for w in [
             'expiring', 'trial expire', 'trial khatam',
             'expiring trials', 'trial end',
@@ -374,7 +401,6 @@ def detect_tool_intent(message: str, role: str) -> Optional[Dict]:
         ]):
             return {'tool': 'get_expiring_trials', 'params': {}}
 
-        # ── Recent Registrations ──────────────────────────
         if any(w in msg for w in [
             'new schools', 'recent registration',
             'naye schools', 'recently joined',
@@ -393,44 +419,96 @@ async def call_tool(
     tool: str,
     params: Dict,
     session_cookie: str,
+    tenant_id: str,  # ✅ ADD THIS
 ) -> Optional[Dict]:
     """
-    Call Next.js tool endpoint to fetch school data
-    
-    ✅ PRIVACY: Data fetched directly from your DB
-    Never sent to external APIs
+    ✅ ENHANCED: Send tenant_id to Next.js for internal AI calls
     """
     endpoint = TOOL_ENDPOINTS.get(role)
     if not endpoint:
+        print(f"❌ No endpoint for role: {role}")
         return None
+
+    # ✅ Include tenant_id in request body
+    request_body = {
+        'tool': tool,
+        'params': params,
+        'tenant_id': tenant_id,  # ← ADD THIS
+    }
+
+    headers = {
+        'Content-Type':  'application/json',
+        'X-Internal-AI': 'true',  # ← Next.js identifies internal call
+    }
+    
+    # Cookie optional (internal calls don't need it)
+    if session_cookie:
+        headers['Cookie'] = session_cookie
+
+    print(f"\n{'='*60}")
+    print(f"📡 TOOL API CALL")
+    print(f"{'='*60}")
+    print(f"Endpoint:  {endpoint}")
+    print(f"Tool:      {tool}")
+    print(f"Tenant:    {tenant_id[-6:]}")
+    print(f"Params:    {params}")
+    print(f"{'='*60}\n")
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(
                 endpoint,
-                json={'tool': tool, 'params': params},
-                headers={
-                    'Content-Type':  'application/json',
-                    'Cookie':        session_cookie,
-                    'X-Internal-AI': 'true',
-                },
+                json=request_body,
+                headers=headers,
             )
+            
+            print(f"\n{'='*60}")
+            print(f"📥 TOOL API RESPONSE")
+            print(f"{'='*60}")
+            print(f"Status:    {response.status_code}")
+            print(f"{'='*60}\n")
+            
             if response.status_code == 200:
-                data = response.json()
-                if data.get('success'):
-                    return data.get('data')
-                print(f"⚠️  Tool error: {data.get('error')}")
+                try:
+                    data = response.json()
+                    if data.get('success'):
+                        print(f"✅ Tool success")
+                        return data.get('data')
+                    else:
+                        print(f"⚠️  Tool error: {data.get('error')}")
+                        return None
+                except json.JSONDecodeError as e:
+                    print(f"❌ JSON decode error: {e}")
+                    return None
+                    
+            elif response.status_code == 401:
+                print(f"🔐 401 Unauthorized - Check X-Internal-AI header")
+                print(f"   Response: {response.text[:200]}")
                 return None
-            print(f"⚠️  Tool HTTP {response.status_code}")
-            return None
+                
+            elif response.status_code == 403:
+                print(f"🚫 403 Forbidden - Auth bypassed nahi hua")
+                print(f"   Response: {response.text[:200]}")
+                return None
+                
+            else:
+                print(f"⚠️  HTTP {response.status_code}")
+                print(f"   Response: {response.text[:200]}")
+                return None
 
+    except httpx.ConnectError as e:
+        print(f"🔌 Connection Error to Next.js:")
+        print(f"   {endpoint}")
+        print(f"   Is Next.js running? Error: {e}")
+        return None
+        
     except httpx.TimeoutException:
-        print(f"⏰ Tool timeout: {tool}")
+        print(f"⏰ Timeout after 15s")
         return None
+        
     except Exception as e:
-        print(f"❌ Tool call error: {e}")
+        print(f"❌ Unexpected error: {type(e).__name__}: {e}")
         return None
-
 
 # ════════════════════════════════════════════════
 # ✅ LOCAL FORMATTER - Data never goes to LLM
@@ -597,6 +675,10 @@ async def portal_chat(request: PortalChatRequest):
             f"{message[:60]}..."
         )
 
+        print(f"📋 Session Cookie: {'✅ Present' if request.session_cookie else '❌ MISSING'}")
+        print(f"📋 Tenant ID: {request.tenant_id}")
+        print(f"📋 User Role: {role}")
+
         # ── Conversation ───────────────────────────────────
         store = get_conv_store()
         store.get_or_create(
@@ -609,6 +691,19 @@ async def portal_chat(request: PortalChatRequest):
 
         # ── Tool Intent Detection ──────────────────────────
         tool_intent   = detect_tool_intent(message, role)
+
+        # ✅ ADD THIS DEBUG:
+        if tool_intent:
+            print(f"✅ Tool detected: {tool_intent['tool']}")
+        else:
+            print(f"⚠️  No tool detected for: '{message}'")
+            print(f"   Role: {role}")
+        
+        # ✅ ADD THIS DEBUG:
+        if tool_intent and not request.session_cookie:
+            print(f"❌ CRITICAL: Tool detected but NO SESSION COOKIE!")
+            print(f"   Tool will NOT be called - frontend must send session_cookie")
+
         tool_data     = None
         tool_used     = False
         provider_used = "none"
@@ -620,7 +715,13 @@ async def portal_chat(request: PortalChatRequest):
                 tool=tool_intent['tool'],
                 params=tool_intent.get('params', {}),
                 session_cookie=request.session_cookie,
+                tenant_id=request.tenant_id,  # ✅ ADD THIS
             )
+        
+        if tool_data:
+            print(f"✅ Tool returned data: {list(tool_data.keys())}")
+        else:
+            print(f"❌ Tool returned NO data (API call failed)")
 
         # ══════════════════════════════════════════════════
         # ✅ PRIVACY: Tool data → LOCAL format (NO LLM)
