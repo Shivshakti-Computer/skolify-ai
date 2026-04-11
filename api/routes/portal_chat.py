@@ -29,6 +29,7 @@ from ..utils.command_executor import get_command_executor
 from ..utils.command_formatter import get_command_formatter
 
 from ..utils.response_cache import get_portal_cache, get_tool_cache
+from .chat import search_knowledge_base, build_context_str, detect_language
 
 router = APIRouter(prefix="/api", tags=["portal"])
 
@@ -1948,6 +1949,23 @@ async def portal_chat(request: PortalChatRequest):
                 print(f"🗑️  Context cleared (not context-worthy tool)")
 
         else:
+            # ════════════════════════════════════════════════
+            # ✅ PUBLIC KB SEARCH - Portal users ko bhi
+            # pricing/features data milna chahiye
+            # ════════════════════════════════════════════════
+            
+            # Public knowledge base search karo
+            # Tool nahi mila matlab general question hai
+            # (pricing, features, trial, etc.)
+            public_chunks = search_knowledge_base(message, n=4)
+            public_context_str = build_context_str(public_chunks)
+            
+            if public_chunks:
+                print(f"📚 Public KB: {len(public_chunks)} chunks found for portal user")
+            else:
+                print(f"📚 Public KB: No chunks found")
+
+            # ── System Prompt ──────────────────────────────
             system_prompt = PORTAL_SYSTEM_PROMPT.format(
                 school_name=school,
                 user_role=role,
@@ -1956,14 +1974,37 @@ async def portal_chat(request: PortalChatRequest):
             )
             system_prompt += ROLE_PROMPTS.get(role, "")
 
+            # ── Message with public context ────────────────
+            if public_context_str:
+                # ✅ Language detect karo
+                language = detect_language(message)
+                
+                if language == 'english':
+                    lang_hint = "\n⚠️ RESPOND IN ENGLISH ONLY."
+                elif language == 'hindi':
+                    lang_hint = "\n⚠️ RESPOND IN HINDI/HINGLISH."
+                else:
+                    lang_hint = "\n⚠️ RESPOND IN HINGLISH."
+
+                # ✅ Public KB data LLM ko do
+                # School data NAHI - sirf Skolify product info
+                augmented_message = (
+                    f"{message}{lang_hint}\n\n"
+                    f"[Skolify product information - use this to answer:\n"
+                    f"{public_context_str}]"
+                )
+                print(f"📚 Augmented with public KB context")
+            else:
+                augmented_message = message
+
+            # ── LLM History ────────────────────────────────
             history          = store.get_llm_messages(conv_id)
             messages_for_llm = history + [
-                {"role": "user", "content": message}
+                {"role": "user", "content": augmented_message}
             ]
 
             llm = get_llm_manager()
             
-            # ✅ USE PORTAL USE-CASE
             ai_response, provider_used = await llm.chat(
                 system_prompt=system_prompt,
                 messages=messages_for_llm,
