@@ -14,6 +14,30 @@ import abc
 from .utils.smart_suggestions import get_smart_suggestions, SmartSuggestions
 from .config import settings
 
+# ══════════════════════════════════════════════════════════
+# ADD CACHE EXPORTS
+# ══════════════════════════════════════════════════════════
+
+from .utils.response_cache import get_public_cache, get_portal_cache, get_tool_cache
+
+# Export all
+__all__ = [
+    'get_embedding_model',
+    'get_chroma_client',
+    'get_collection',
+    'reset_collection',
+    'get_llm_manager',
+    'get_conv_store',
+    'get_context_manager',
+    'get_suggestions_engine',
+    'get_command_parser',
+    'get_command_executor',
+    'get_command_formatter',
+    'get_public_cache',      # ✅ NEW
+    'get_portal_cache',      # ✅ NEW
+    'get_tool_cache',        # ✅ NEW
+]
+
 
 # ════════════════════════════════════════════════
 # EMBEDDING MODEL & VECTOR DB
@@ -69,23 +93,20 @@ def reset_collection():
     _collection = None
 
 
-# ════════════════════════════════════════════════
-# GROQ CLIENT (Free LLM - No data training)
-# ════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════
+# UPDATE GroqClient TO SUPPORT MULTIPLE MODELS
+# ══════════════════════════════════════════════════════════
 
 class GroqClient:
     """
-    Groq API Client.
-    FREE tier: ~14,400 requests/day on Llama 3.3 70B
-    Privacy: Groq does NOT use your data for training
-    Speed: ~500 tokens/second (very fast!)
+    Groq API Client with model selection
     """
 
     BASE_URL = "https://api.groq.com/openai/v1"
 
-    def __init__(self):
+    def __init__(self, model: str = None):
         self.api_key = settings.GROQ_API_KEY
-        self.model = settings.GROQ_MODEL
+        self.model = model or settings.GROQ_PUBLIC_MODEL  # Default to public model
 
     def is_configured(self) -> bool:
         return bool(self.api_key and self.api_key != "")
@@ -109,7 +130,7 @@ class GroqClient:
         ]
 
         payload = {
-            "model": self.model,
+            "model": self.model,  # ✅ Use instance model
             "messages": full_messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
@@ -134,7 +155,7 @@ class GroqClient:
                         data["choices"][0]["message"]["content"].strip()
                     )
                     usage = data.get("usage", {})
-                    print(f"   Groq: {usage.get('total_tokens', '?')} tokens")
+                    print(f"   Groq ({self.model}): {usage.get('total_tokens', '?')} tokens")
                     return content
 
                 elif response.status_code == 429:
@@ -1349,79 +1370,102 @@ class DeepSeekClient:
 
 
 # ════════════════════════════════════════════════
-# UPDATED LLM MANAGER (2025 Edition)
+# UPDATED LLM MANAGER (2026 Edition)
 # ════════════════════════════════════════════════
 
 class LLMManager:
     """
-    Multi-provider LLM orchestrator with intelligent fallback
+    Multi-provider LLM orchestrator with use-case optimization
     
-    🎯 2025 Provider Chain:
-    1. Groq        → Fastest (30 RPM, 14K RPD free)
-    2. Gemini 2.0  → Latest (Unlimited experimental)
-    3. OpenRouter  → Multi-model (100+ options)
-    4. DeepSeek    → Best value ($0.14/1M tokens)
-    5. HuggingFace → Unlimited free (slower cold start)
-    
-    ✅ PRIVACY GUARANTEED:
-    - Portal data → NEVER sent to ANY provider
-    - Only public website info sent to LLMs
+    🎯 Strategy:
+    - Public chat → Fast models (llama-3.1-8b-instant)
+    - Portal chat → Quality models (llama-3.3-70b-versatile)
+    - Admin commands → Unlimited tokens (groq/compound)
     """
 
     def __init__(self):
+        # Initialize all provider clients
         self.providers: Dict[str, any] = {
-            "groq":        GroqClient(),
-            "gemini":      GeminiClient(),
-            "openrouter":  OpenRouterClient(),
-            "deepseek":    DeepSeekClient(),
-            "huggingface": HuggingFaceClient(),
+            "groq_public":   GroqClient(model=settings.GROQ_PUBLIC_MODEL),
+            "groq_portal":   GroqClient(model=settings.GROQ_PORTAL_MODEL),
+            "groq_admin":    GroqClient(model=settings.GROQ_ADMIN_MODEL),
+            "gemini":        GeminiClient(),
+            "openrouter":    OpenRouterClient(),
+            "deepseek":      DeepSeekClient(),
+            "huggingface":   HuggingFaceClient(),
         }
 
-        self.provider_order = [
+        # Provider orders for different use cases
+        self.public_order = [
             p.strip()
-            for p in settings.LLM_PROVIDER_ORDER.split(",")
+            for p in settings.PUBLIC_LLM_PROVIDER_ORDER.split(",")
+            if p.strip() in self.providers
+        ]
+        
+        self.portal_order = [
+            p.strip()
+            for p in settings.PORTAL_LLM_PROVIDER_ORDER.split(",")
+            if p.strip() in self.providers
+        ]
+        
+        self.admin_order = [
+            p.strip()
+            for p in settings.ADMIN_LLM_PROVIDER_ORDER.split(",")
             if p.strip() in self.providers
         ]
 
         self._log_status()
 
     def _log_status(self):
-        print("\n🤖 LLM Provider Chain (2025):")
+        print("\n🤖 LLM Provider Strategy (2025):")
         
-        rate_info = {
-            "groq":        "⚡ 30 RPM, 14K RPD",
-            "gemini":      "🆕 Unlimited (exp)",
-            "openrouter":  "🎯 100+ models",
-            "deepseek":    "💎 60 RPM, $0.14/1M",
-            "huggingface": "♾️  Unlimited free",
-        }
-        
-        for i, name in enumerate(self.provider_order, 1):
+        print("\n📱 PUBLIC CHAT:")
+        for i, name in enumerate(self.public_order, 1):
             client = self.providers[name]
             configured = client.is_configured()
-            
+            model = self._get_model_name(name)
             status_icon = "✅" if configured else "❌"
-            status_text = "ready" if configured else "no key"
-            
-            print(
-                f"   {i}. {name:12} "
-                f"{status_icon} {status_text:8} "
-                f"{rate_info.get(name, '')}"
-            )
+            print(f"   {i}. {name:15} {status_icon} {model}")
         
-        if not self.is_any_configured():
-            print("   ⚠️  No LLM configured → local fallback only")
+        print("\n🏫 PORTAL CHAT:")
+        for i, name in enumerate(self.portal_order, 1):
+            client = self.providers[name]
+            configured = client.is_configured()
+            model = self._get_model_name(name)
+            status_icon = "✅" if configured else "❌"
+            print(f"   {i}. {name:15} {status_icon} {model}")
+        
+        print("\n⚙️  ADMIN COMMANDS:")
+        for i, name in enumerate(self.admin_order, 1):
+            client = self.providers[name]
+            configured = client.is_configured()
+            model = self._get_model_name(name)
+            status_icon = "✅" if configured else "❌"
+            print(f"   {i}. {name:15} {status_icon} {model}")
         
         if settings.ENABLE_RESPONSE_CACHE:
-            print(f"\n   💾 Response cache enabled ({settings.CACHE_TTL_SECONDS}s TTL)")
+            print(f"\n💾 Cache: PUBLIC={settings.PUBLIC_CACHE_TTL_SECONDS}s, PORTAL={settings.PORTAL_CACHE_TTL_SECONDS}s")
         
         print()
+
+    def _get_model_name(self, provider: str) -> str:
+        """Get model name for a provider"""
+        models = {
+            "groq_public":   settings.GROQ_PUBLIC_MODEL,
+            "groq_portal":   settings.GROQ_PORTAL_MODEL,
+            "groq_admin":    settings.GROQ_ADMIN_MODEL,
+            "gemini":        settings.GEMINI_MODEL,
+            "openrouter":    settings.OPENROUTER_MODEL,
+            "deepseek":      settings.DEEPSEEK_MODEL,
+            "huggingface":   settings.HF_MODEL,
+        }
+        return models.get(provider, "unknown")
 
     def is_any_configured(self) -> bool:
         """Check if at least one provider is configured"""
         return any(
             self.providers[name].is_configured()
-            for name in self.provider_order
+            for name in list(self.public_order) + list(self.portal_order)
         )
 
     async def chat(
@@ -1430,29 +1474,30 @@ class LLMManager:
         messages: List[Dict],
         temperature: float = None,
         max_tokens: int = None,
+        use_case: str = "public",  # ✅ NEW: public | portal | admin
     ) -> tuple[Optional[str], str]:
         """
-        Try providers in order until one succeeds
+        Try providers in order based on use case
         
         Args:
-            system_prompt: System instructions
-            messages: Chat history
-            temperature: Sampling temperature (0-1)
-            max_tokens: Max response length
-            
-        Returns:
-            (response_text, provider_used)
-            provider_used: "groq"|"gemini"|"openrouter"|"deepseek"|"huggingface"|"none"
+            use_case: "public" | "portal" | "admin"
         """
+        
+        # Select provider order based on use case
+        if use_case == "admin":
+            provider_order = self.admin_order
+        elif use_case == "portal":
+            provider_order = self.portal_order
+        else:
+            provider_order = self.public_order
 
-        for provider_name in self.provider_order:
+        for provider_name in provider_order:
             client = self.providers.get(provider_name)
 
-            # Skip if not configured
             if not client or not client.is_configured():
                 continue
 
-            print(f"🔄 Trying {provider_name}...")
+            print(f"🔄 Trying {provider_name} ({use_case})...")
 
             try:
                 result = await client.chat(
@@ -1463,19 +1508,17 @@ class LLMManager:
                 )
 
                 if result:
-                    # Success!
                     return result, provider_name
 
-                # Failed → try next provider
                 print(f"   ↳ {provider_name} failed, trying next...")
 
             except Exception as e:
                 print(f"   ↳ {provider_name} exception: {e}")
                 continue
 
-        # All providers failed
         print("❌ All LLM providers failed → local fallback")
         return None, "none"
+
 
 
 # ════════════════════════════════════════════════

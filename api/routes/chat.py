@@ -1,8 +1,11 @@
 # api/routes/chat.py
-# FIXES:
-# 1. Multi-provider LLM (5 providers with intelligent fallback)
-# 2. Public chat only - no sensitive data ever sent to LLM
-# 3. Response caching for rate limit reduction
+# UPDATED: 2025-02-01
+# ✅ Multi-provider LLM with intelligent fallback
+# ✅ Public chat only - no sensitive data to LLM
+# ✅ Response caching for rate limit reduction
+# ✅ Anti-hallucination system
+# ✅ Better language detection
+# ✅ Enhanced quick replies
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
@@ -13,7 +16,7 @@ import re
 from ..dependencies import (
     get_embedding_model,
     get_collection,
-    get_llm_manager,      # ✅ Multi-provider manager (2025)
+    get_llm_manager,
     get_conv_store,
 )
 from ..config import settings
@@ -22,6 +25,8 @@ from ..prompts.system_prompt import (
     PORTAL_SYSTEM_PROMPT,
     ROLE_PROMPTS,
 )
+
+from ..utils.response_cache import get_public_cache
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -119,11 +124,16 @@ def build_context_str(chunks: List[Dict]) -> str:
 
 
 # ════════════════════════════════════════════════
-# CONTEXT EXTRACTOR
+# ✅ ENHANCED CONTEXT EXTRACTOR
 # ════════════════════════════════════════════════
 
 def extract_context(message: str) -> Dict:
-    """Extract metadata from user message"""
+    """
+    Extract metadata from user message
+    
+    ✅ IMPROVED: Better topic detection
+    ✅ NEW: More topics covered
+    """
     updates   = {}
     msg_lower = message.lower()
 
@@ -135,15 +145,50 @@ def extract_context(message: str) -> Dict:
             updates["student_count"] = n
             break
 
-    # Detect topic for smart replies
+    # ✅ ENHANCED topic detection with more keywords
     topics = {
-        "pricing":  ["price", "cost", "plan", "kitna", "₹", "rupee", "monthly", "yearly", "fee", "cheap"],
-        "features": ["feature", "module", "offer", "include", "kya kya", "what can", "kya hota"],
-        "trial":    ["trial", "free", "demo", "try", "bina paise"],
-        "support":  ["support", "help", "contact", "call", "email"],
-        "setup":    ["setup", "start", "register", "kaise", "begin"],
-        "security": ["security", "safe", "privacy", "data"],
-        "credits":  ["credit", "sms", "whatsapp", "message"],
+        "pricing": [
+            "price", "cost", "plan", "kitna", "₹", "rupee", 
+            "monthly", "yearly", "fee", "cheap", "expensive",
+            "kharcha", "paisa", "charge", "rate", "amount"
+        ],
+        "features": [
+            "feature", "module", "offer", "include", "kya kya", 
+            "what can", "kya hota", "facility", "option",
+            "function", "capability", "benefit"
+        ],
+        "trial": [
+            "trial", "free", "demo", "try", "bina paise",
+            "test", "sample", "dekh lo", "use kar ke dekho"
+        ],
+        "support": [
+            "support", "help", "contact", "call", "email",
+            "madad", "sahayata", "assistance", "customer care"
+        ],
+        "setup": [
+            "setup", "start", "register", "kaise", "begin",
+            "install", "configure", "shuru", "implement"
+        ],
+        "security": [
+            "security", "safe", "privacy", "data", "secure",
+            "protection", "suraksha", "backup", "encryption"
+        ],
+        "credits": [
+            "credit", "sms", "whatsapp", "message", "notification",
+            "alert", "communication", "messaging"
+        ],
+        "mobile": [
+            "mobile", "app", "android", "ios", "phone",
+            "smartphone", "application", "download"
+        ],
+        "integration": [
+            "integration", "api", "connect", "sync", "import",
+            "export", "integrate", "third party"
+        ],
+        "comparison": [
+            "compare", "vs", "versus", "better", "difference",
+            "alternative", "competitor", "similar"
+        ],
     }
 
     for topic, keywords in topics.items():
@@ -155,11 +200,16 @@ def extract_context(message: str) -> Dict:
 
 
 # ════════════════════════════════════════════════
-# QUICK REPLIES
+# ✅ ENHANCED QUICK REPLIES
 # ════════════════════════════════════════════════
 
 def get_quick_replies(topic: str, role: str = "guest") -> List[Dict]:
-    """Get contextual quick reply buttons"""
+    """
+    Get contextual quick reply buttons
+    
+    ✅ IMPROVED: More topic-specific suggestions
+    ✅ NEW: Better action buttons
+    """
     defaults = [
         {"text": "💰 Plans",        "payload": "admin_plans_overview"},
         {"text": "🎁 Free Trial",   "payload": "trial_info"},
@@ -196,20 +246,48 @@ def get_quick_replies(topic: str, role: str = "guest") -> List[Dict]:
             {"text": "📹 Video Guide",      "payload": "setup_guide"},
             {"text": "📞 Free Setup Call",  "action": "forward"},
         ],
+        "security": [  # ✅ NEW
+            {"text": "🔒 Data Security",  "payload": "security_features"},
+            {"text": "📦 All Features",   "payload": "features_overview"},
+            {"text": "💰 See Plans",      "payload": "admin_plans_overview"},
+            {"text": "📞 Talk to Us",     "action": "forward"},
+        ],
+        "credits": [  # ✅ NEW
+            {"text": "📱 SMS/WhatsApp",   "payload": "credits_info"},
+            {"text": "💰 Credit Pricing", "payload": "credit_pricing"},
+            {"text": "🎁 Free Trial",     "payload": "trial_info"},
+            {"text": "📞 Get Demo",       "action": "forward"},
+        ],
+        "mobile": [  # ✅ NEW
+            {"text": "📱 Mobile Features", "payload": "mobile_features"},
+            {"text": "📦 All Features",    "payload": "features_overview"},
+            {"text": "💰 See Plans",       "payload": "admin_plans_overview"},
+            {"text": "🎁 Try Free",        "payload": "trial_info"},
+        ],
+        "comparison": [  # ✅ NEW
+            {"text": "⚡ Why Skolify?",    "payload": "why_skolify"},
+            {"text": "💰 Our Pricing",     "payload": "admin_plans_overview"},
+            {"text": "🎁 Free Trial",      "payload": "trial_info"},
+            {"text": "📞 Talk to Expert",  "action": "forward"},
+        ],
     }
 
     return topic_replies.get(topic, defaults)
 
 
 # ════════════════════════════════════════════════
-# SMART FALLBACK
+# ✅ ENHANCED SMART FALLBACK
 # ════════════════════════════════════════════════
 
 FALLBACK_RESPONSES = {
     "greeting": (
         "Hey! 👋 I'm **Anvi**, Skolify's AI assistant!\n\n"
-        "I can help you with pricing, features, free trial, "
-        "and getting started.\n\nWhat would you like to know?"
+        "I can help you with:\n"
+        "• 💰 Pricing & Plans\n"
+        "• 📦 Features & Modules\n"
+        "• 🎁 Free Trial (60 days!)\n"
+        "• 🚀 Getting Started\n\n"
+        "What would you like to know?"
     ),
     "pricing": (
         "Here are Skolify's plans:\n\n"
@@ -234,8 +312,26 @@ FALLBACK_RESPONSES = {
         "**60-Day Free Trial** 🎁\n\n"
         "✅ Full access — no credit card\n"
         "✅ 500 free SMS/WhatsApp credits\n"
-        "✅ Free setup support\n\n"
+        "✅ Free setup support\n"
+        "✅ All features unlocked\n\n"
         "Start at **skolify.in/register** — takes just 2 minutes!"
+    ),
+    "support": (  # ✅ NEW
+        "**Get Help:**\n\n"
+        "📧 Email: support@skolify.in\n"
+        "📞 Call: +91-XXXXXXXXXX\n"
+        "💬 WhatsApp: +91-XXXXXXXXXX\n\n"
+        "Available: Mon-Sat, 9 AM - 6 PM IST\n\n"
+        "Or start a free trial and get **free setup support**!"
+    ),
+    "mobile": (  # ✅ NEW
+        "**📱 Mobile App Features:**\n\n"
+        "✅ Android & iOS apps\n"
+        "✅ Teacher attendance marking\n"
+        "✅ Parent notifications\n"
+        "✅ Student homework tracking\n"
+        "✅ Fee payment reminders\n\n"
+        "Download from Play Store & App Store!"
     ),
     "default": (
         "I can help you with Skolify's plans, features, "
@@ -250,11 +346,12 @@ def smart_fallback(message: str, context: Dict) -> str:
     Smart template-based responses when all LLMs fail
     
     ✅ No external API dependency
+    ✅ ENHANCED: More topic coverage
     """
     msg = message.lower()
 
     # Greeting detection
-    greetings = ["hi", "hello", "hey", "namaste", "hlo", "hii"]
+    greetings = ["hi", "hello", "hey", "namaste", "hlo", "hii", "helo", "hy"]
     if any(msg.startswith(g) for g in greetings) or msg in greetings:
         return FALLBACK_RESPONSES["greeting"]
 
@@ -263,31 +360,77 @@ def smart_fallback(message: str, context: Dict) -> str:
     if topic in FALLBACK_RESPONSES:
         return FALLBACK_RESPONSES[topic]
 
-    # Keyword-based detection
-    if any(w in msg for w in ["price", "plan", "cost", "kitna"]):
+    # Keyword-based detection (fallback)
+    if any(w in msg for w in ["price", "plan", "cost", "kitna", "₹"]):
         return FALLBACK_RESPONSES["pricing"]
-    if any(w in msg for w in ["feature", "module", "offer"]):
+    if any(w in msg for w in ["feature", "module", "offer", "kya kya"]):
         return FALLBACK_RESPONSES["features"]
-    if any(w in msg for w in ["trial", "free", "demo"]):
+    if any(w in msg for w in ["trial", "free", "demo", "bina paise"]):
         return FALLBACK_RESPONSES["trial"]
+    if any(w in msg for w in ["support", "help", "contact", "madad"]):
+        return FALLBACK_RESPONSES["support"]
+    if any(w in msg for w in ["mobile", "app", "android", "ios"]):
+        return FALLBACK_RESPONSES["mobile"]
 
     return FALLBACK_RESPONSES["default"]
 
 
 # ════════════════════════════════════════════════
-# MAIN CHAT ENDPOINT
+# ✅ ENHANCED LANGUAGE DETECTION
+# ════════════════════════════════════════════════
+
+def detect_language(message: str) -> str:
+    """
+    Detect if message is in English, Hindi, or Hinglish
+    
+    ✅ IMPROVED: Better accuracy
+    Returns: 'english', 'hindi', or 'hinglish'
+    """
+    msg_lower = message.lower()
+    
+    # Pure English indicators
+    english_words = [
+        'hello', 'hi', 'hey', 'who', 'are', 'you', 'what', 
+        'is', 'tell', 'me', 'show', 'how', 'can', 'help',
+        'pricing', 'features', 'plans', 'trial', 'free',
+        'the', 'and', 'or', 'but', 'for', 'with', 'about',
+        'your', 'our', 'their', 'does', 'have', 'want'
+    ]
+    
+    # Hindi/Hinglish indicators
+    hindi_words = [
+        'kya', 'hai', 'hain', 'kaun', 'ho', 'batao', 'dikhao',
+        'kaise', 'kitne', 'aap', 'main', 'mujhe', 'chahiye',
+        'mera', 'mere', 'tera', 'tere', 'uska', 'uske',
+        'kab', 'kahan', 'kyun', 'kyu', 'koi', 'kuch',
+        'bhi', 'bhe', 'toh', 'to', 'jo', 'jab'
+    ]
+    
+    # Count occurrences
+    words = msg_lower.split()
+    english_count = sum(1 for w in words if any(e in w for e in english_words))
+    hindi_count = sum(1 for w in words if any(h in w for h in hindi_words))
+    
+    # Determine language
+    if hindi_count == 0 and english_count > 0:
+        return 'english'
+    elif hindi_count > 0 and english_count == 0:
+        return 'hindi'
+    elif hindi_count > 0 and english_count > 0:
+        return 'hinglish'
+    else:
+        # Default: check for Roman script Hindi
+        if any(h in msg_lower for h in ['aap', 'mujhe', 'kaise', 'batao']):
+            return 'hinglish'
+        return 'english'
+
+
+# ════════════════════════════════════════════════
+# ✅ MAIN CHAT ENDPOINT - ENHANCED
 # ════════════════════════════════════════════════
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """
-    Public chat endpoint - Website visitor assistant
-    
-    ✅ PRIVACY ARCHITECTURE:
-    - Only public website content used as context
-    - No school/user data ever sent to LLM
-    - Multi-provider fallback for reliability
-    """
     try:
         conv_id = request.conversation_id or str(uuid.uuid4())
         message = request.message.strip()
@@ -308,9 +451,49 @@ async def chat(request: ChatRequest):
             user_id=request.user_id,
         )
 
+        # ══════════════════════════════════════════════════
+        # ✅ CHECK CACHE FIRST (Public Mode Only)
+        # ══════════════════════════════════════════════════
+        if not is_portal_mode:
+            cache = get_public_cache()
+            cached = cache.get(
+                query=message,
+                context="",
+                role=role,
+                mode="public"
+            )
+            
+            if cached:
+                print(f"💾 Cache HIT for: {message[:40]}...")
+                
+                # Save to conversation
+                store.add_messages(
+                    conv_id=conv_id,
+                    user_msg=message,
+                    ai_msg=cached,
+                )
+                
+                # Extract topic for quick replies
+                ctx_update = extract_context(message)
+                topic = ctx_update.get("last_topic", "")
+                
+                return ChatResponse(
+                    success=True,
+                    answer=cached,
+                    conversation_id=conv_id,
+                    sources=[],
+                    quickReplies=get_quick_replies(topic, role),
+                    canForward=False,
+                    metadata={
+                        'cached': True,
+                        'llm_used': False,
+                        'source': 'cache',
+                        'data_sent_to_llm': False,
+                        'cache_hit': True,
+                    }
+                )
+
         # ── Knowledge Base Search ──────────────────────────
-        # ✅ PRIVACY: Only public website info search hota hai
-        # School data kabhi search nahi hota
         chunks      = search_knowledge_base(message)
         context_str = build_context_str(chunks)
         ctx_update  = extract_context(message)
@@ -318,23 +501,30 @@ async def chat(request: ChatRequest):
 
         # ── System Prompt ──────────────────────────────────
         if is_portal_mode:
-            # Portal mode: guide only, no real data in prompt
             system_prompt = PORTAL_SYSTEM_PROMPT.format(
                 school_name=request.user_name or "Your School",
                 user_role=role,
                 user_name=request.user_name or "User",
-                # ✅ PRIVACY: Real school data NEVER in prompt
                 school_context="Guide user to correct portal section.",
             )
             system_prompt += ROLE_PROMPTS.get(role, "")
         else:
             system_prompt = PUBLIC_SYSTEM_PROMPT
 
-        # ── Augmented Message ──────────────────────────────
-        # ✅ PRIVACY: Only public KB context added
+        # ── Augmented Message with Language Detection ─────
         if context_str:
+            # ✅ IMPROVED: Use enhanced language detection
+            language = detect_language(message)
+            
+            if language == 'english':
+                language_hint = "\n⚠️ RESPOND IN ENGLISH ONLY - User wrote in pure English."
+            elif language == 'hindi':
+                language_hint = "\n⚠️ RESPOND IN HINDI/HINGLISH - User wrote in Hindi."
+            else:  # hinglish
+                language_hint = "\n⚠️ RESPOND IN HINGLISH - User wrote in Hindi/English mix."
+            
             augmented_message = (
-                f"{message}\n\n"
+                f"{message}{language_hint}\n\n"
                 f"[Relevant Skolify info:\n{context_str}]"
             )
         else:
@@ -346,24 +536,84 @@ async def chat(request: ChatRequest):
             {"role": "user", "content": augmented_message}
         ]
 
-        # ── Multi-Provider LLM Call ────────────────────────
-        # ✅ RATE LIMIT FIX (2025): 
-        # Groq → Gemini → OpenRouter → DeepSeek → HuggingFace → Fallback
-        llm                        = get_llm_manager()
+        # ══════════════════════════════════════════════════
+        # ✅ LLM CALL WITH USE-CASE ROUTING
+        # ══════════════════════════════════════════════════
+        llm = get_llm_manager()
+        
+        use_case = "public"  # Public chat uses public models
+        
         ai_response, provider_used = await llm.chat(
             system_prompt=system_prompt,
             messages=messages_for_llm,
+            use_case=use_case,
+            temperature=0.4,  # Slightly more creative for public chat
+            max_tokens=500,   # Longer responses allowed
         )
+        
         used_llm = ai_response is not None
 
         if used_llm:
             print(f"✅ LLM: {provider_used} | {len(ai_response)} chars")
+            
+            # ✅ ANTI-HALLUCINATION CHECK (for public chat too)
+            msg_lower = message.lower()
+            
+            # Check if asking for specific data
+            data_keywords = [
+                'list', 'show me', 'tell me the', 'names of',
+                'who are', 'which schools', 'student names',
+                'teacher names', 'specific data'
+            ]
+            
+            asking_for_data = any(kw in msg_lower for kw in data_keywords)
+            
+            # Check if response contains fake specific data
+            fake_data_patterns = [
+                r'\d+\.\s+[A-Z][a-z]+\s+[A-Z][a-z]+',  # "1. John Doe"
+                r'Student\s+Name:',
+                r'Teacher\s+Name:',
+                r'School\s+Name:.*\n.*\n.*\n',  # Multiple school names listed
+            ]
+            
+            has_fake_data = any(
+                re.search(pattern, ai_response) 
+                for pattern in fake_data_patterns
+            )
+            
+            if asking_for_data and has_fake_data:
+                print("⚠️ HALLUCINATION DETECTED in public chat!")
+                
+                ai_response = (
+                    "I don't have access to specific school or student data. 🤔\n\n"
+                    "I can help you with:\n"
+                    "• 💰 Skolify's pricing & plans\n"
+                    "• 📦 Features & modules\n"
+                    "• 🎁 Free trial info\n"
+                    "• 🚀 How to get started\n\n"
+                    "What would you like to know about Skolify?"
+                )
+                provider_used = "hallucination_blocker"
 
         # ── Smart Fallback ─────────────────────────────────
         if not ai_response:
             print("📋 All LLMs unavailable → smart fallback")
             ai_response   = smart_fallback(message, ctx_update)
             provider_used = "local_fallback"
+
+        # ══════════════════════════════════════════════════
+        # ✅ CACHE THE RESPONSE (Public Mode Only)
+        # ══════════════════════════════════════════════════
+        if ai_response and not is_portal_mode and used_llm and provider_used != "hallucination_blocker":
+            cache = get_public_cache()
+            cache.set(
+                query=message,
+                response=ai_response,
+                context="",
+                role=role,
+                mode="public"
+            )
+            print(f"💾 Response cached for: {message[:40]}...")
 
         # ── Save ───────────────────────────────────────────
         store.add_messages(
@@ -398,9 +648,9 @@ async def chat(request: ChatRequest):
                 "source":             f"ai_{provider_used}" if used_llm else "local_fallback",
                 "portal_mode":        is_portal_mode,
                 "tenant_id":          request.tenant_id,
-                # ✅ Privacy flag
                 "data_sent_to_llm":   False,
                 "conversation_turns": len(conversation["messages"]) // 2 + 1,
+                "language_detected":  detect_language(message),  # ✅ NEW
             },
         )
 
@@ -422,7 +672,7 @@ async def chat(request: ChatRequest):
 
 
 # ════════════════════════════════════════════════
-# HEALTH CHECK
+# ✅ HEALTH CHECK - ENHANCED
 # ════════════════════════════════════════════════
 
 @router.get("/health")
@@ -430,15 +680,13 @@ async def health():
     """
     System health check endpoint
     
-    Returns status of:
-    - Vector DB
-    - LLM providers
-    - Conversation storage
+    ✅ IMPROVED: More detailed status
     """
     status = {
         "api":       "healthy",
         "vector_db": "unknown",
         "llm":       "unknown",
+        "cache":     "unknown",  # ✅ NEW
         "documents": 0,
     }
     
@@ -453,7 +701,7 @@ async def health():
     except Exception as e:
         status["vector_db"] = f"error: {str(e)}"
 
-    # ✅ Multi-provider LLM status
+    # Multi-provider LLM status
     try:
         llm = get_llm_manager()
         status["llm"] = "multi_provider"
@@ -465,10 +713,19 @@ async def health():
     except Exception:
         status["llm"] = "unknown"
 
+    # ✅ Cache status
+    try:
+        cache = get_public_cache()
+        stats = cache.get_stats()
+        status["cache"] = "healthy"
+        status["cache_stats"] = stats
+    except Exception:
+        status["cache"] = "unavailable"
+
     # Conversation storage
     try:
-        stats = get_conv_store().get_stats()
-        status["conversations"] = stats
+        conv_stats = get_conv_store().get_stats()
+        status["conversations"] = conv_stats
     except Exception:
         pass
 
@@ -476,23 +733,21 @@ async def health():
 
 
 # ════════════════════════════════════════════════
-# ✅ UPDATED HELPER - All 5 providers (2025)
+# ✅ HELPER - Model Name Mapping
 # ════════════════════════════════════════════════
 
 def _get_model_name(provider: str) -> str:
-    """
-    Get model name for metadata tracking
-    
-    Supports all 5 LLM providers:
-    - Groq, Gemini, OpenRouter, DeepSeek, HuggingFace
-    """
+    """Get model name for metadata tracking"""
     models = {
-        "groq":           settings.GROQ_MODEL,
-        "gemini":         settings.GEMINI_MODEL,
-        "openrouter":     settings.OPENROUTER_MODEL,
-        "deepseek":       settings.DEEPSEEK_MODEL,
-        "huggingface":    settings.HF_MODEL,
-        "local_fallback": "template",
-        "none":           "template",
+        "groq_public":            settings.GROQ_PUBLIC_MODEL,
+        "groq_portal":            settings.GROQ_PORTAL_MODEL,
+        "groq_admin":             settings.GROQ_ADMIN_MODEL,
+        "gemini":                 settings.GEMINI_MODEL,
+        "openrouter":             settings.OPENROUTER_MODEL,
+        "deepseek":               settings.DEEPSEEK_MODEL,
+        "huggingface":            settings.HF_MODEL,
+        "local_fallback":         "template",
+        "hallucination_blocker":  "anti_hallucination",  # ✅ NEW
+        "none":                   "template",
     }
     return models.get(provider, "unknown")

@@ -16,6 +16,7 @@ from ..dependencies import (
     get_llm_manager,
 )
 from ..config import settings
+from ..utils.response_cache import get_public_cache, get_portal_cache, get_tool_cache
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -341,3 +342,65 @@ async def clear_conversations(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+@router.get("/cache-stats")
+async def cache_stats(_: bool = Header(verify_key)):
+    """Get comprehensive cache statistics"""
+    try:
+        public_cache = get_public_cache()
+        portal_cache = get_portal_cache()
+        tool_cache   = get_tool_cache()
+        
+        return {
+            "success": True,
+            "caches": {
+                "public": public_cache.get_stats(),
+                "portal": portal_cache.get_stats(),
+                "tool":   tool_cache.get_stats(),
+            },
+            "total_memory_kb": (
+                public_cache.get_stats()['memory_usage_kb'] +
+                portal_cache.get_stats()['memory_usage_kb'] +
+                tool_cache.get_stats()['memory_usage_kb']
+            ),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.post("/clear-cache")
+async def clear_cache(
+    _: bool = Header(verify_key),
+    cache_type: str = "all"  # all | public | portal | tool
+):
+    """Clear response caches"""
+    try:
+        cleared = []
+        
+        if cache_type in ["all", "public"]:
+            get_public_cache().clear()
+            cleared.append("public")
+        
+        if cache_type in ["all", "portal"]:
+            get_portal_cache().clear()
+            cleared.append("portal")
+        
+        if cache_type in ["all", "tool"]:
+            get_tool_cache().clear()
+            cleared.append("tool")
+        
+        return {
+            "success": True,
+            "message": f"Cleared {', '.join(cleared)} cache(s)",
+            "cleared": cleared
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }

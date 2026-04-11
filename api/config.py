@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     CONVERSATIONS_DB: Path = BASE_DIR / "data" / "conversations.db"
 
     API_TITLE: str = "Skolify AI"
-    API_VERSION: str = "2.0.0"
+    API_VERSION: str = "3.0.0"
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 7860
 
@@ -36,42 +36,75 @@ class Settings(BaseSettings):
     MIN_SIMILARITY_SCORE: float = 0.05
 
     # ══════════════════════════════════════════════════════
-    # 🎯 LLM PROVIDERS (2025 Best Free Options)
+    # 🚀 OPTIMIZED LLM STRATEGY (2026)
     # ══════════════════════════════════════════════════════
     
-    # 1️⃣ Groq (Fastest, good free tier)
+    # ── GROQ (Primary - Multiple Models by Use Case) ─────
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "llama-3.1-8b-instant"
-    # Free: 30 RPM, 14,400 RPD
     
-    # 2️⃣ Gemini 2.0 (Latest, very capable)
+    # Public Chat - Fastest + Highest Daily Limit
+    GROQ_PUBLIC_MODEL: str = "llama-3.1-8b-instant"
+    # RPM: 30, RPD: 14,400, TPM: 6K, TPD: 500K
+    
+    # Portal Chat - Better Quality
+    GROQ_PORTAL_MODEL: str = "llama-3.3-70b-versatile"
+    # RPM: 30, RPD: 1,000, TPM: 12K, TPD: 100K
+    
+    # Admin Commands - Unlimited Tokens
+    GROQ_ADMIN_MODEL: str = "groq/compound"
+    # RPM: 30, RPD: 250, TPM: 70K, TPD: UNLIMITED
+    
+    # Fallback - High Quality
+    GROQ_FALLBACK_MODEL: str = "llama-3.3-70b-versatile"
+    
+    # ── GEMINI (Secondary - When Groq Exhausted) ──────────
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.5-flash"  # ✅ UPDATED - Latest & fastest
-    # Fallback: "gemini-1.5-flash" (15 RPM, 1500 RPD)
+    GEMINI_MODEL: str = "gemini-2.0-flash-exp"
+    # Free experimental, but has daily limits
     
-    # 3️⃣ OpenRouter (100+ models, one API)
+    # ── OPENROUTER (Tertiary) ─────────────────────────────
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_MODEL: str = "google/gemini-2.0-flash-exp:free"
-    # Many free models available
     
-    # 4️⃣ DeepSeek (Best value, very cheap)
+    # ── DEEPSEEK (Quality Fallback - Paid but Cheap) ──────
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_MODEL: str = "deepseek-chat"
-    # $0.14 per 1M tokens (99% cheaper than GPT-4)
+    # $0.14 per 1M tokens
     
-    # 5️⃣ Hugging Face (Unlimited free)
+    # ── HUGGINGFACE (Last Resort - Slow but Free) ─────────
     HF_API_KEY: str = ""
     HF_MODEL: str = "Qwen/Qwen2.5-7B-Instruct"
-    # Unlimited requests, slower cold start
     
-    # Provider order (comma-separated)
-    LLM_PROVIDER_ORDER: str = "gemini,groq,openrouter,deepseek,huggingface"
-
-    # ── Rate Limiting & Caching ───────────────────────────
+    # ── PROVIDER PRIORITY BY USE CASE ─────────────────────
+    # Public website chat (high volume, simple queries)
+    PUBLIC_LLM_PROVIDER_ORDER: str = "groq_public,gemini,openrouter"
+    
+    # Portal chat (authenticated users, complex queries)
+    PORTAL_LLM_PROVIDER_ORDER: str = "groq_portal,groq_admin,gemini,deepseek"
+    
+    # Admin commands (very long prompts, tool calls)
+    ADMIN_LLM_PROVIDER_ORDER: str = "groq_admin,groq_portal,deepseek"
+    
+    # ── RESPONSE CACHING ──────────────────────────────────
     ENABLE_RESPONSE_CACHE: bool = True
-    CACHE_TTL_SECONDS: int = 300
+    
+    # Public chat - longer cache (queries repeat often)
+    PUBLIC_CACHE_TTL_SECONDS: int = 3600  # 1 hour
+    
+    # Portal chat - shorter cache (data changes)
+    PORTAL_CACHE_TTL_SECONDS: int = 300   # 5 minutes
+    
+    # Tool responses - very short cache
+    TOOL_CACHE_TTL_SECONDS: int = 120     # 2 minutes
+    
+    # ── RATE LIMITING ─────────────────────────────────────
     GROQ_MAX_RETRIES: int = 1
     FALLBACK_DELAY_MS: int = 100
+    
+    # Track Groq rate limits
+    GROQ_TRACK_RATE_LIMITS: bool = True
+    GROQ_RPM_LIMIT: int = 30
+    GROQ_RPM_WARNING_THRESHOLD: float = 0.8  # Switch at 80%
 
     MAX_TOKENS: int = 500
     TEMPERATURE: float = 0.65
@@ -79,10 +112,8 @@ class Settings(BaseSettings):
     MAX_HISTORY_PAIRS: int = 6
     CONVERSATION_EXPIRY_HOURS: int = 24
     
-    # ✅ ADD THESE NEW SETTINGS:
-    # Portal users get more context (they return multiple times)
     PORTAL_MAX_HISTORY_PAIRS: int = 8
-    PORTAL_CONVERSATION_EXPIRY_HOURS: int = 72  # 3 days
+    PORTAL_CONVERSATION_EXPIRY_HOURS: int = 72
 
     CONV_STORAGE: str = "sqlite"
     TURSO_DATABASE_URL: str = ""

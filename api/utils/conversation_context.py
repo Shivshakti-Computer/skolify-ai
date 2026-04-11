@@ -150,20 +150,17 @@ class ConversationContext:
             if topic == 'get_student_count':
                 return "students ki list dikhao", True
 
-        # ── "kitne?" / "how many?" ────────────────────────
-        if self._is_pronoun_query(msg_lower, ['kitne', 'how many', 'kitna']):
+        if self._is_pronoun_query(msg_lower, ['kaun', 'who', 'kon']):
+            # ✅ FIX: Check ABSENT keyword first
+            if any(w in msg_lower for w in ['absent', 'nahi aaye', 'missing']):
+                return "aaj absent students kaun hain", True
+            
             if topic == 'get_fee_summary':
-                if any(w in msg_lower for w in ['pending', 'baaki', 'due']):
-                    return "total pending fee kitni hai", True
-                if any(w in msg_lower for w in ['collect', 'aaya', 'paid']):
-                    return "total collected fee kitni hai", True
+                return "pending fees list dikhao", True
+            
             if topic == 'get_attendance_today':
-                if any(w in msg_lower for w in ['absent', 'nahi', 'missing']):
-                    return "aaj kitne absent hain", True
-                if any(w in msg_lower for w in ['present', 'aaye', 'came']):
-                    return "aaj kitne present hain", True
-            if topic == 'get_student_count':
-                return "total students kitne hain", True
+                if data.get('absent', 0) > 0:
+                    return "absent students kaun hain", True
 
         # ── "list dikhao" ─────────────────────────────────
         if self._is_list_query(msg_lower):
